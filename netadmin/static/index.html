@@ -104,6 +104,11 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
   </section>
 
   <section data-p="vps" hidden>
+    <div class="card" style="margin-bottom:14px" id="selfcard" hidden>
+      <div class="row"><div><b>Этот сервер</b> <span class="muted">· здесь работает панель</span>
+        <div class="muted" style="font-size:13px;margin-top:4px">Поставить AmneziaWG и Xray прямо сюда: без SSH и без ввода IP. Порт Xray выберется сам (443 или 8443, если 443 занят HTTPS панели).</div></div>
+        <span class="sp"></span><button class="b p" id="addself">Установить AmneziaWG и Xray на этот сервер</button></div>
+    </div>
     <div class="card" style="margin-bottom:14px">
       <div class="row"><h2 style="margin:0">Добавить VPS</h2><span class="sp"></span>
         <span class="muted" style="font-size:12px">Debian/Ubuntu, вход по SSH-ключу или паролю</span></div>
@@ -217,6 +222,7 @@ function render(){
     ['OSPF-соседи',S.ospf_neighbors.length],['Xray',svc('xray')],['BIRD',svc('bird')]
   ]).map(([k,v])=>`<div class="card stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
   $('#navdev').hidden=K;$('#navroutes').hidden=K;$('#homecard').hidden=K;
+  $('#selfcard').hidden=!K||V.some(v=>v.local);
   document.querySelectorAll('.nk').forEach(e=>e.hidden=K);
   if(K&&(tab==='devices'||tab==='routes'))show('overview');
   $('#homenote').textContent=K?'Режим Keenetic: панель стоит на VPS, дома ничего ставить не нужно. После смены режима переразверните каждый VPS и импортируйте его конфиг в Keenetic (карточка VPS → «Keenetic»).'
@@ -277,7 +283,7 @@ function renderVps(){
       <dt>Router ID</dt><dd>${esc(v.vps_router_id)} · cost ${v.cost}</dd>`}
       <dt>Handshake</dt><dd>${ago(l.handshake_ago)}</dd>
       <dt>Развёртывание</dt><dd>${depTxt[d.status]||esc(d.status)}${d.at?' · '+new Date(d.at*1000).toLocaleString('ru-RU'):''}</dd></dl>
-      <div class="row"><button class="b p" data-a="deploy" data-id="${v.id}" ${d.status==='running'?'disabled':''}>Развернуть по SSH</button>
+      <div class="row"><button class="b p" data-a="${v.local?'redeploy':'deploy'}" data-id="${v.id}" ${d.status==='running'?'disabled':''}>${v.local?'Переустановить':'Развернуть по SSH'}</button>
       ${K?`<button class="b p" data-a="keen" data-id="${v.id}">Keenetic</button>`:''}
       <button class="b" data-a="files" data-id="${v.id}">Конфиги</button>
       <button class="b" data-a="client" data-id="${v.id}">Доступ с телефона</button>
@@ -349,6 +355,7 @@ $('#vpslist').onclick=async e=>{const b=e.target.closest('button[data-a]');if(!b
       <div class="row" style="margin-top:10px"><button class="b p" id="cpl">Копировать ссылку</button></div>`),$('#cpl')&&($('#cpl').onclick=()=>navigator.clipboard.writeText(v.client_link).then(()=>toast('Скопировано')));
     if(b.dataset.a==='deploy')deployModal(v);
     if(b.dataset.a==='keen')keeneticModal(v);
+    if(b.dataset.a==='redeploy'){await api(`/api/vps/${v.id}/deploy`,{method:'POST',body:'{}'});toast('Установка запущена');load()}
     if(b.dataset.a==='del'){if(!confirm(`Удалить ${v.name}? Ключи этого линка будут потеряны. `+(isK()?'Подключение WireGuard в Keenetic удалите руками.':'После удаления нажмите «Применить дома».')))return;
       await api(`/api/vps/${v.id}`,{method:'DELETE'});toast('Удалён');load()}
   }catch(err){toast(err.message)}
@@ -371,6 +378,13 @@ $('#addf').onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new 
       <div class="row"><a class="b" href="/api/vps/${v.id}/bootstrap.sh" style="text-decoration:none;color:inherit">Скачать bootstrap.sh</a></div>`)}
   catch(err){toast(err.message)}};
 
+$('#addself').onclick=async e=>{e.target.disabled=true;
+  try{const v=await api('/api/vps/self',{method:'POST',body:'{}'});await load();
+    modal('Установка на этот сервер запущена',`<p>Сервер добавлен как <b>${esc(v.name)}</b> (${esc(v.public_ip)}), Xray на порту <span class="mono">${v.xray_port}</span>, AmneziaWG на UDP <span class="mono">${v.awg.port}</span>.</p>
+      <ol class="steps"><li>Дождитесь «развёрнут» на карточке (2–5 минут, ход в «Логе развёртывания»).</li>
+      <li>Если у хостера есть свой фаервол, откройте в нём UDP ${v.awg.port} и TCP ${v.xray_port}.</li>
+      <li>Нажмите на карточке <b>«Keenetic»</b> и импортируйте конфиг в роутер.</li></ol>`)}
+  catch(err){toast(err.message)}finally{e.target.disabled=false}};
 $('#applyhome').onclick=async()=>{try{await api('/api/home/apply',{method:'POST',body:'{}'});toast(S.apply_enabled?'Применение запущено':'Файлы сгенерированы');load()}catch(e){toast(e.message)}};
 $('#homefiles').onclick=async()=>{try{filesModal('Конфиги домашнего узла',await api('/api/home/files'))}catch(e){toast(e.message)}};
 $('#homef').onsubmit=async e=>{e.preventDefault();try{await api('/api/home',{method:'PATCH',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});toast('Сохранено');load()}catch(err){toast(err.message)}};

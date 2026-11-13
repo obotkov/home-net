@@ -16,7 +16,9 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
+import urllib.request
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -136,11 +138,67 @@ class App:
 
     SSH_KEY = "/root/.ssh/id_ed25519"
 
+    @staticmethod
+    def detect_public_ip():
+        for url in ("https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"):
+            try:
+                with urllib.request.urlopen(url, timeout=5) as r:
+                    ip = r.read().decode().strip()
+                socket.inet_aton(ip)
+                return ip
+            except (OSError, ValueError):
+                continue
+        try:  # без интернета: адрес исходящего интерфейса
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
+                sk.connect(("1.1.1.1", 53))
+                return sk.getsockname()[0]
+        except OSError:
+            raise ValueError("Не удалось определить публичный IP этого сервера: добавьте его через форму")
+
+    @staticmethod
+    def free_tcp_port(candidates=(443, 8443, 9443, 10443)):
+        """Первый свободный порт для Xray (443 обычно занят Caddy, если панель открыта по домену)."""
+        for port in candidates:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sk:
+                sk.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    sk.bind(("0.0.0.0", port))
+                    return port
+                except OSError:
+                    continue
+        return 8443
+
+    def add_self(self):
+        """Добавить сервер, на котором работает панель, и сразу поставить на него AmneziaWG и Xray."""
+        if any(v.get("local") for v in self.store.vps):
+            raise ValueError("Этот сервер уже добавлен")
+        if collectors.demo_mode():
+            ip, port = "198.51.100.10", 8443
+        else:
+            ip, port = self.detect_public_ip(), self.free_tcp_port()
+        base = re.sub(r"[^a-z0-9-]", "", socket.gethostname().split(".")[0].lower()).lstrip("0123456789-")[:12] or "main"
+        name, n = base, 2
+        while any(v["name"] == name for v in self.store.vps):
+            name = f"{base[:10]}{n}"
+            n += 1
+        v = self.store.add_vps({"name": name, "label": "Этот сервер (панель)", "public_ip": ip,
+                                "xray_port": port, "local": True})
+        self.deploy_vps(v)
+        return v
+
     def deploy_vps(self, v, password=None):
         """Разворачивание VPS по SSH. Пароль (если дан) используется один раз: ставим на VPS ключ узла
         через sshpass + ssh-copy-id, дальше всё идёт по ключу. Пароль нигде не сохраняется."""
         script = generator.bootstrap_for(self.store.home, v)
         self.write_out(generator.all_files(self.store.home, self.store.vps, v))
+        if v.get("local"):  # сервер с панелью: запускаем локально, SSH не нужен
+            v.setdefault("deploy", {})
+            if os.geteuid() != 0 and not collectors.demo_mode():
+                raise ValueError("Панель запущена не от root: установка на этот сервер невозможна")
+            self._run_bg(v["deploy"], [(["bash", "-s"], script, None)],
+                         ["[демо] локальная установка", "== пакеты", "== AmneziaWG", "== конфиги", "== сервисы",
+                          "interface: awg-home", f"  listening port: {v['awg']['port']}", "== готово"])
+            return
         target = f"{v['ssh_user']}@{v['public_ip']}"
         common = ["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=15", "-p", str(v["ssh_port"])]
         steps = []
@@ -398,6 +456,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, {"error": "нет такого passkey"})
                 s.save()
                 return self._send(200, {"ok": True})
+            if method == "POST" and path == "/api/vps/self":
+                return self._send(201, public_vps(s, APP.add_self()))
             if method == "POST" and path == "/api/vps":
                 return self._send(201, public_vps(s, s.add_vps(body)))
             if method == "PATCH" and path == "/api/home":

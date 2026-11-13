@@ -140,6 +140,8 @@ class Store:
                 "deploy": {"status": "never", "log": "", "at": None},
                 **self.plan_for(idx),
             }
+            if form.get("local"):
+                v["local"] = True  # это сервер, на котором стоит сама панель: ставим без SSH
             ensure_awg(v)
             self.vps.append(v)
             self.save()

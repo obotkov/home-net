@@ -31,6 +31,11 @@ class KeeneticTest(unittest.TestCase):
         files = generator.all_files(self.s.home, self.s.vps, self.v)
         self.assertIn("ams/keenetic-ams.conf", files)
 
+    def test_local_flag(self):
+        v = self.s.add_vps({"name": "panel", "public_ip": "198.51.100.10", "local": True})
+        self.assertTrue(v["local"])
+        self.assertNotIn("local", self.v)
+
     def test_bad_mode(self):
         with self.assertRaises(ValueError):
             self.s.update_home({"mode": "openwrt"})
