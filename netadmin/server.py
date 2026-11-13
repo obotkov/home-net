@@ -180,6 +180,55 @@ def status(store):
             "xray": _xray(), "tunnels": _tunnels()}
 
 
+def _free_port():
+    import socket
+    with socket.socket() as sk:
+        sk.bind(("127.0.0.1", 0))
+        return sk.getsockname()[1]
+
+
+def xray_selftest(v, gw):
+    """Подключаемся к своему Xray как телефон: VLESS+REALITY на публичный IP:порт, через него HTTP."""
+    import tempfile
+    steps = []
+    code, text = _run(["curl", "-m", "6", "-s", "-o", "/dev/null", "-w", "HTTP %{http_code}\n", f"https://{v['sni']}"], 10)
+    steps.append({"title": f"сайт маскировки {v['sni']} доступен с VPS", "ok": code == 0 and "000" not in text,
+                  "output": text.strip()})
+    port = _free_port()
+    conf = {"log": {"loglevel": "warning"},
+            "inbounds": [{"listen": "127.0.0.1", "port": port, "protocol": "socks", "settings": {"udp": False}}],
+            "outbounds": [{"protocol": "vless", "settings": {"vnext": [{"address": v["public_ip"], "port": v["xray_port"],
+                           "users": [{"id": v["xray"]["client_uuid"], "flow": "xtls-rprx-vision", "encryption": "none"}]}]},
+                           "streamSettings": {"network": "tcp", "security": "reality", "realitySettings": {
+                               "serverName": v["sni"], "fingerprint": "chrome", "publicKey": v["xray"]["reality_pub"],
+                               "shortId": v["xray"]["short_id"]}}}]}
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(conf, f)
+        path = f.name
+    os.chmod(path, 0o600)
+    proc = None
+    try:
+        proc = subprocess.Popen(["xray", "run", "-c", path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        time.sleep(1.5)
+        for title, url in ((f"телефонный путь: VPS {v['public_ip']}:{v['xray_port']} → интернет", "https://ifconfig.me/ip"),
+                           (f"телефонный путь: VPS → дом http://{gw}", f"http://{gw}")):
+            code, text = _run(["curl", "-m", "8", "-s", "-o", "/dev/null", "-w", "HTTP %{http_code}\n",
+                               "--socks5-hostname", f"127.0.0.1:{port}", url], 12)
+            steps.append({"title": title, "ok": code == 0 and "000" not in text, "output": text.strip()})
+    finally:
+        if proc:
+            proc.terminate()
+            try:
+                log = proc.communicate(timeout=3)[0]
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                log = ""
+            if not all(st["ok"] for st in steps[1:]) and log.strip():
+                steps.append({"title": "журнал тестового клиента Xray", "ok": False, "output": log.strip()[-1500:]})
+        os.unlink(path)
+    return steps
+
+
 def diagnose(store):
     """Проверка цепочки VPS -> туннель -> дом прямо с сервера панели."""
     home = store.home
@@ -204,6 +253,12 @@ def diagnose(store):
                 code = 1
         ok_all &= code == 0
         out.append({"title": title, "ok": code == 0, "output": text.strip()[-1500:]})
+    v_local = v
+    xr = []
+    if v_local and not demo_mode() and shutil.which("xray"):
+        xr = xray_selftest(v_local, gw)
+        out += xr
+        ok_all &= all(st["ok"] for st in xr)
     hint = None
     by = {o["title"].split(" ")[0] + ("-tun" if "туннеле" in o["title"] else ""): o for o in out}
     route = next(o for o in out if o["title"].startswith("маршрут"))
@@ -218,6 +273,16 @@ def diagnose(store):
                 "«system configuration save» (имя подключения может быть Wireguard1, видно в «show interface»).")
     elif not by.get("HTTP", {"ok": True})["ok"]:
         hint = "Роутер отвечает на ping, но веб-страница не открылась: проверьте доступ к веб-интерфейсу в настройках Keenetic."
+    if hint is None and xr and not all(st["ok"] for st in xr):
+        if not xr[0]["ok"]:
+            hint = (f"VPS не может открыть сайт маскировки {v_local['sni']}: REALITY не будет работать. "
+                    "Поменяйте SNI (например www.apple.com или dl.google.com) и переустановите сервер.")
+        else:
+            hint = ("Xray на VPS не принимает подключение даже от самого VPS: посмотрите журнал службы xray на этой вкладке "
+                    "и нажмите «Переустановить» на карточке сервера.")
+    elif hint is None and xr:
+        hint = (f"С VPS всё работает, в том числе путь как у телефона. Если телефон не подключается: откройте у хостера "
+                f"TCP-порт {v_local['xray_port']}, переимпортируйте ссылку и отключите в клиенте обход LAN.")
     return {"ok": ok_all, "steps": out, "hint": hint}
 
 
