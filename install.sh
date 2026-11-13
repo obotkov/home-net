@@ -181,11 +181,11 @@ if [ "${NETADMIN_SKIP_DEPS:-0}" != 1 ]; then
   if command -v apt-get >/dev/null; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
-    apt-get install -y -qq python3 wireguard-tools bird2 curl tar iproute2 openssh-client >/dev/null
+    apt-get install -y -qq python3 wireguard-tools bird2 curl tar iproute2 openssh-client sshpass >/dev/null
   elif command -v dnf >/dev/null; then
-    dnf install -y -q python3 wireguard-tools bird curl tar iproute openssh-clients
+    dnf install -y -q python3 wireguard-tools bird curl tar iproute openssh-clients sshpass
   elif command -v pacman >/dev/null; then
-    pacman -Sy --noconfirm --needed python wireguard-tools bird curl tar iproute2 openssh
+    pacman -Sy --noconfirm --needed python wireguard-tools bird curl tar iproute2 openssh sshpass
   else
     die "неизвестный пакетный менеджер; поставьте python3, wireguard-tools, bird2 и запустите с NETADMIN_SKIP_DEPS=1"
   fi

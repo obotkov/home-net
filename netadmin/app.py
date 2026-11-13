@@ -15,6 +15,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import threading
 import time
@@ -54,8 +55,15 @@ class App:
             os.chmod(p, 0o700 if name.endswith(".sh") else 0o600)
         return str(self.out_dir.resolve())
 
-    def _run_bg(self, target, cmd, stdin_text, demo_lines):
+    def _run_bg(self, target, steps, demo_lines, secrets_=()):
+        """steps: [(cmd, stdin_text, extra_env)] — выполняются по очереди, до первой ошибки."""
         target.update(status="running", log="", at=int(time.time()))
+
+        def scrub(text):
+            for sec in secrets_:
+                if sec:
+                    text = text.replace(sec, "***")
+            return text
 
         def work():
             if collectors.demo_mode():
@@ -64,28 +72,58 @@ class App:
                     target["log"] += line + "\n"
                 target["status"] = "ok"
             else:
-                try:
-                    p = subprocess.run(cmd, input=stdin_text, capture_output=True, text=True, timeout=900)
-                    target["log"] = (p.stdout + p.stderr)[-20000:]
-                    target["status"] = "ok" if p.returncode == 0 else "error"
-                except Exception as e:  # noqa: BLE001
-                    target["log"] += f"\n{e}"
-                    target["status"] = "error"
+                ok = True
+                for cmd, stdin_text, extra_env in steps:
+                    try:
+                        env = {**os.environ, **(extra_env or {})}
+                        p = subprocess.run(cmd, input=stdin_text, capture_output=True, text=True, timeout=900, env=env)
+                        target["log"] = (target["log"] + scrub(p.stdout + p.stderr))[-20000:]
+                        if p.returncode != 0:
+                            ok = False
+                            break
+                    except Exception as e:  # noqa: BLE001
+                        target["log"] += f"\n{scrub(str(e))}"
+                        ok = False
+                        break
+                target["status"] = "ok" if ok else "error"
             self.store.save()
 
         threading.Thread(target=work, daemon=True).start()
 
-    def deploy_vps(self, v):
+    SSH_KEY = "/root/.ssh/id_ed25519"
+
+    def deploy_vps(self, v, password=None):
+        """Разворачивание VPS по SSH. Пароль (если дан) используется один раз: ставим на VPS ключ узла
+        через sshpass + ssh-copy-id, дальше всё идёт по ключу. Пароль нигде не сохраняется."""
         script = generator.vps_bootstrap(self.store.home, v)
         self.write_out(generator.all_files(self.store.home, self.store.vps, v))
-        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=15",
-               "-p", str(v["ssh_port"]), f"{v['ssh_user']}@{v['public_ip']}",
-               "bash -s" if v["ssh_user"] == "root" else "sudo bash -s"]
+        target = f"{v['ssh_user']}@{v['public_ip']}"
+        common = ["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=15", "-p", str(v["ssh_port"])]
+        steps = []
+        demo = ["[демо] ssh %s" % target]
+        if password:
+            if not shutil.which("sshpass"):
+                raise ValueError("Для входа по паролю нужен sshpass: sudo apt install sshpass (или обновите установку)")
+            if not os.path.exists(self.SSH_KEY + ".pub"):
+                subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", self.SSH_KEY, "-C", "netadmin"],
+                               check=True)
+            steps.append((["sshpass", "-e", "ssh-copy-id", "-i", self.SSH_KEY + ".pub",
+                           "-o", "PreferredAuthentications=password,keyboard-interactive",
+                           "-o", "PubkeyAuthentication=no", *common, target], None, {"SSHPASS": password}))
+            demo.append("[демо] вход по паролю, ключ узла добавлен на VPS")
+        remote = "bash -s"
+        stdin = script
+        if v["ssh_user"] != "root":
+            if password:  # sudo читает пароль первой строкой stdin, остальное получает bash
+                remote, stdin = "sudo -S -p '' bash -s", password + "\n" + script
+            else:
+                remote = ("sudo -n true 2>/dev/null || { echo 'sudo просит пароль: нажмите «Развернуть» и укажите пароль SSH' >&2; exit 1; }; "
+                          "sudo -n bash -s")
+        steps.append((["ssh", "-o", "BatchMode=yes", "-i", self.SSH_KEY, *common, target, remote], stdin, None))
         v.setdefault("deploy", {})
-        self._run_bg(v["deploy"], cmd, script, [
-            "[демо] ssh %s@%s" % (v["ssh_user"], v["public_ip"]), "== пакеты", "== конфиги",
-            "== фаервол: WireGuard доступен только через локальный Xray", "== сервисы",
-            "interface: wg-home", "ospf1      OSPF       ---        up     Running", "== готово"])
+        self._run_bg(v["deploy"], steps, demo + [
+            "== пакеты", "== конфиги", "== фаервол: WireGuard доступен только через локальный Xray", "== сервисы",
+            "interface: wg-home", "ospf1      OSPF       ---        up     Running", "== готово"], secrets_=(password,))
 
     def apply_home(self):
         files = generator.all_files(self.store.home, self.store.vps)
@@ -95,7 +133,7 @@ class App:
                                    log=f"Файлы записаны в {path}/home.\nЗапустите на домашнем узле: sudo bash {path}/home/apply.sh\n"
                                        "(или запустите админку с NETADMIN_APPLY=1 от root, чтобы применять кнопкой)")
             return
-        self._run_bg(self.home_apply, ["bash", "-s"], files["home/apply.sh"], ["[демо] применено"])
+        self._run_bg(self.home_apply, [(["bash", "-s"], files["home/apply.sh"], None)], ["[демо] применено"])
 
 
 APP = None
@@ -204,7 +242,7 @@ class Handler(BaseHTTPRequestHandler):
                     v = s.get_vps(m[1])
                     if not v:
                         raise KeyError(m[1])
-                    APP.deploy_vps(v)
+                    APP.deploy_vps(v, (body.get("password") or None) if isinstance(body, dict) else None)
                     return self._send(202, v["deploy"])
             self._send(404, {"error": "not found"})
         except KeyError:

@@ -105,13 +105,14 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
   <section data-p="vps" hidden>
     <div class="card" style="margin-bottom:14px">
       <div class="row"><h2 style="margin:0">Добавить VPS</h2><span class="sp"></span>
-        <span class="muted" style="font-size:12px">Debian/Ubuntu, доступ по SSH-ключу</span></div>
+        <span class="muted" style="font-size:12px">Debian/Ubuntu, вход по SSH-ключу или паролю</span></div>
       <form class="f" id="addf" style="margin-top:12px" autocomplete="off">
         <label>Имя (латиница)<input name="name" required pattern="[a-z][a-z0-9-]{0,11}" placeholder="ams"></label>
         <label>Подпись<input name="label" placeholder="Амстердам"></label>
         <label>Публичный IP<input name="public_ip" required placeholder="203.0.113.10"></label>
         <label>SSH пользователь<input name="ssh_user" value="root"></label>
         <label>SSH порт<input name="ssh_port" type="number" value="22"></label>
+        <label>SSH пароль (если нет ключа)<input name="password" type="password" autocomplete="new-password" placeholder="не сохраняется"></label>
         <label>Порт Xray<input name="xray_port" type="number" value="443"></label>
         <label>SNI для REALITY<input name="sni" value="www.microsoft.com"></label>
         <label>Стоимость OSPF<input name="cost" type="number" value="10"></label>
@@ -275,6 +276,20 @@ function filesModal(title,files){
   draw();
 }
 
+function deployModal(v){
+  modal('Развернуть '+v.label,`<p>Админка подключится к <span class="mono">${esc(v.ssh_user)}@${esc(v.public_ip)}:${v.ssh_port}</span> и установит WireGuard, Xray и BIRD.
+    Конфиги BIRD и Xray на VPS будут перезаписаны, используйте чистый VPS.</p>
+    <form id="depf" class="f" style="grid-template-columns:1fr auto;align-items:end" autocomplete="off">
+      <label>SSH пароль <span class="muted">(оставьте пустым, если ключ узла уже добавлен на VPS)</span>
+        <input name="password" type="password" autocomplete="new-password" placeholder="не сохраняется"></label>
+      <button class="b p">Развернуть</button></form>
+    <p class="muted" style="font-size:12px;margin-bottom:0">Пароль используется один раз: им на VPS ставится SSH-ключ этого узла, дальше вход идёт по ключу. Пароль никуда не записывается.</p>`);
+  $('#depf').onsubmit=async e=>{e.preventDefault();const pw=e.target.password.value;
+    try{await api(`/api/vps/${v.id}/deploy`,{method:'POST',body:JSON.stringify(pw?{password:pw}:{})});dlg.close();toast('Развёртывание запущено');load()}
+    catch(err){toast(err.message)}};
+  setTimeout(()=>$('#depf input').focus(),50);
+}
+
 $('#vpslist').onclick=async e=>{const b=e.target.closest('button[data-a]');if(!b)return;const v=V.find(x=>x.id===b.dataset.id);
   try{
     if(b.dataset.a==='files')filesModal('Конфиги '+v.name,await api(`/api/vps/${v.id}/files`));
@@ -284,16 +299,20 @@ $('#vpslist').onclick=async e=>{const b=e.target.closest('button[data-a]');if(!b
       <li>Домашняя сеть ${esc(S.home.lan_cidr)} будет доступна через VPS → туннель → дом. Интернет пойдёт через VPS.</li></ol>
       <pre style="white-space:pre-wrap;word-break:break-all">${esc(v.client_link)}</pre>
       <div class="row" style="margin-top:10px"><button class="b p" id="cpl">Копировать ссылку</button></div>`),$('#cpl')&&($('#cpl').onclick=()=>navigator.clipboard.writeText(v.client_link).then(()=>toast('Скопировано')));
-    if(b.dataset.a==='deploy'){if(!confirm(`Подключиться к ${v.ssh_user}@${v.public_ip} по SSH и установить WireGuard, Xray, BIRD? Существующие /etc/bird/bird.conf и конфиг Xray на VPS будут перезаписаны.`))return;
-      await api(`/api/vps/${v.id}/deploy`,{method:'POST',body:'{}'});toast('Развёртывание запущено');load()}
+    if(b.dataset.a==='deploy')deployModal(v);
     if(b.dataset.a==='del'){if(!confirm(`Удалить ${v.name}? Ключи этого линка будут потеряны. После удаления нажмите «Применить дома».`))return;
       await api(`/api/vps/${v.id}`,{method:'DELETE'});toast('Удалён');load()}
   }catch(err){toast(err.message)}
 };
 
-$('#addf').onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.target));
+$('#addf').onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.target));const pw=f.password;delete f.password;
   try{const v=await api('/api/vps',{method:'POST',body:JSON.stringify(f)});e.target.reset();
     e.target.ssh_user.value='root';e.target.ssh_port.value=22;e.target.xray_port.value=443;e.target.sni.value='www.microsoft.com';e.target.cost.value=S.home.ospf_cost;
+    if(pw){try{await api(`/api/vps/${v.id}/deploy`,{method:'POST',body:JSON.stringify({password:pw})});
+      await load();modal('VPS «'+v.label+'» добавлен',`<p>Развёртывание по паролю запущено, ход виден в «Логе развёртывания» на карточке.
+        Пароль использован только для установки SSH-ключа узла и не сохранён.</p>
+        <p>Когда развёртывание закончится, нажмите <b>«Применить дома»</b>, и через минуту линк станет зелёным.</p>`);return}
+      catch(err){toast('VPS добавлен, но развернуть не удалось: '+err.message)}}
     await load();modal('VPS «'+v.label+'» добавлен',`<p>Адреса и ключи сгенерированы: туннель <span class="mono">${esc(v.home_tun_ip)} ↔ ${esc(v.vps_tun_ip)}</span>, локальный порт Xray <span class="mono">${v.local_port}</span>.</p>
       <ol class="steps"><li><b>Развернуть VPS.</b> Кнопка «Развернуть по SSH» на карточке (нужен SSH-ключ этого узла на VPS) или вручную: <pre style="margin-top:6px">ssh ${esc(v.ssh_user)}@${esc(v.public_ip)} 'sudo bash -s' &lt; bootstrap-${esc(v.name)}.sh</pre></li>
       <li><b>Применить дома.</b> Кнопка «Применить дома» поднимет интерфейс <span class="mono">${esc(v.iface)}</span>, добавит VPS в Xray и BIRD.</li>
