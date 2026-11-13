@@ -240,6 +240,20 @@ command -v xray >/dev/null || {XRAY_INSTALL}
     parts.append(_heredoc("/etc/bird/bird.conf", bird_home_conf(home, vps_list), "640"))
     parts.append("chown bird:bird /etc/bird/bird.conf 2>/dev/null || true\n")
     parts.append(_SYSCTL)
+    # NAT из туннелей в LAN: домашним компам не нужен обратный маршрут к 10.255.x.x
+    # (их шлюз — обычный роутер), и Windows-фаервол видит соединение как локальное.
+    parts.append(_heredoc("/etc/nftables.d/netadmin-home.nft", f"""table ip netadmin_home {{
+  chain postrouting {{
+    type nat hook postrouting priority srcnat; policy accept;
+    oifname "{home['lan_if']}" ip saddr {home['transit_pool']} masquerade
+  }}
+}}""", "644"))
+    parts.append("""command -v nft >/dev/null || { apt-get install -y -qq nftables >/dev/null 2>&1 || true; }
+nft delete table ip netadmin_home 2>/dev/null || true
+nft -f /etc/nftables.d/netadmin-home.nft
+[ -f /etc/nftables.conf ] && ! grep -q netadmin-home.nft /etc/nftables.conf && echo 'include "/etc/nftables.d/netadmin-home.nft"' >> /etc/nftables.conf
+systemctl enable -q nftables 2>/dev/null || true
+""")
     parts.append(f"""
 KEEP=" {names} "
 for f in /etc/wireguard/wg-*.conf; do
