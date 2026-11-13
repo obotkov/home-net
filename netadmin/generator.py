@@ -381,7 +381,8 @@ if ! lsmod | grep -q '^amneziawg' && ! command -v amneziawg-go >/dev/null; then
   curl -fsSL "https://go.dev/dl/$GOVER.linux-$GOARCH.tar.gz" | tar -C /opt/netadmin-go -xz
   rm -rf /tmp/amneziawg-go
   git clone -q --depth 1 https://github.com/amnezia-vpn/amneziawg-go /tmp/amneziawg-go
-  (cd /tmp/amneziawg-go && PATH="/opt/netadmin-go/go/bin:$PATH" GOTOOLCHAIN=auto make >/dev/null)
+  (cd /tmp/amneziawg-go && HOME="${{HOME:-/root}}" GOPATH=/opt/netadmin-go/gopath GOCACHE=/opt/netadmin-go/cache \\
+    PATH="/opt/netadmin-go/go/bin:$PATH" GOTOOLCHAIN=auto make >/dev/null)
   install -m 755 /tmp/amneziawg-go/amneziawg-go /usr/local/bin/amneziawg-go
   rm -rf /tmp/amneziawg-go /opt/netadmin-go
   echo "   amneziawg-go установлен"
