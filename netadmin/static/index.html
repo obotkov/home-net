@@ -82,6 +82,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
   </nav>
   <span class="sp"></span>
   <span class="pill" id="updated">загрузка…</span>
+  <button class="b" id="logout" style="padding:4px 10px;font-size:12px">Выйти</button>
 </header>
 <main>
   <div id="demo" class="banner" hidden>Демо-режим: показаны примерные данные (на узле нет <b>wg</b> или задан NETADMIN_DEMO=1). Добавление VPS и генерация конфигов работают по-настоящему.</div>
@@ -148,6 +149,12 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
       </form>
       <p class="muted" style="font-size:12px;margin:14px 0 0">После изменения нажмите «Применить дома» на вкладке VPS и переразверните VPS, если меняли MTU или стоимость.</p>
     </div>
+    <div class="card" style="margin-top:14px" id="pkcard">
+      <div class="row"><h2 style="margin:0">Passkey</h2><span class="sp"></span>
+        <button class="b p" id="pkadd">Добавить passkey</button></div>
+      <p class="muted" style="margin:8px 0 12px;font-size:13px">Вход по отпечатку, Face ID или аппаратному ключу вместо пароля. Работает только по HTTPS (домен) или на localhost. Пароль остаётся запасным способом.</p>
+      <div class="tw" id="pklist"></div>
+    </div>
     <div class="card" style="margin-top:14px" id="updcard">
       <div class="row"><h2 style="margin:0">Обновления</h2><span class="sp"></span>
         <button class="b" id="updcheck">Проверить</button>
@@ -173,6 +180,7 @@ async function api(path,opt={}){
   const r=await fetch(path,{...opt,headers:{...H,...(opt.headers||{})}});
   const ct=r.headers.get('content-type')||'';
   const body=ct.includes('json')?await r.json():await r.text();
+  if(r.status===401){location.replace('/login');throw new Error('нужен вход')}
   if(!r.ok) throw new Error(body.error||r.statusText);
   return body;
 }
@@ -366,6 +374,27 @@ $('#updapply').onclick=async()=>{if(!confirm('Скачать и установи
     $('#updres').innerHTML='<span class="pill degraded"><span class="dot"></span>Обновляю… панель перезапустится</span>';
     updPoll=setInterval(updStatus,2000)}catch(e){toast(e.message)}};
 setTimeout(()=>updCheck(true),1500);
+
+// ---------------- passkey
+const b64u={enc:b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''),
+  dec:s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0))};
+async function pkLoad(){try{const L=await api('/api/passkeys');
+  $('#pklist').innerHTML=L.length?`<table><tr><th>Название</th><th>Добавлен</th><th>Последний вход</th><th></th></tr>`+L.map(c=>`<tr><td>${esc(c.name)}</td><td>${fmtDate(c.created)}</td><td>${c.last_used?fmtDate(c.last_used):'—'}</td>
+    <td style="text-align:right"><button class="b d" data-pkdel="${esc(c.id)}">Удалить</button></td></tr>`).join('')+'</table>':'<div class="muted">Passkey пока нет</div>'}catch(e){}}
+if(!window.PublicKeyCredential||!window.isSecureContext){$('#pkadd').disabled=true;$('#pkadd').title='Нужен HTTPS (домен) или localhost'}
+$('#pkadd').onclick=async()=>{const name=prompt('Название passkey (например, «iPhone» или «YubiKey»)','passkey');if(name===null)return;
+  try{const o=await api('/api/passkeys/options',{method:'POST',body:'{}'});
+    const cred=await navigator.credentials.create({publicKey:{challenge:b64u.dec(o.challenge),rp:o.rp,
+      user:{...o.user,id:b64u.dec(o.user.id)},pubKeyCredParams:o.pubKeyCredParams,timeout:o.timeout,attestation:o.attestation,
+      authenticatorSelection:o.authenticatorSelection,excludeCredentials:o.excludeCredentials.map(c=>({type:c.type,id:b64u.dec(c.id)}))}});
+    await api('/api/passkeys',{method:'POST',body:JSON.stringify({name,response:{clientDataJSON:b64u.enc(cred.response.clientDataJSON),
+      attestationObject:b64u.enc(cred.response.attestationObject)}})});
+    toast('Passkey добавлен');pkLoad()}
+  catch(e){toast(e.name==='NotAllowedError'?'Отменено':e.name==='InvalidStateError'?'Этот ключ уже добавлен':e.message)}};
+$('#pklist').onclick=async e=>{const id=e.target.dataset.pkdel;if(!id||!confirm('Удалить этот passkey?'))return;
+  try{await api('/api/passkeys/'+encodeURIComponent(id),{method:'DELETE'});toast('Удалён');pkLoad()}catch(err){toast(err.message)}};
+$('#logout').onclick=async()=>{try{await api('/auth/logout',{method:'POST',body:'{}'})}catch(e){}location.replace('/login')};
+pkLoad();
 show(tab);load();setInterval(()=>{if(!dlg.open)load()},5000);
 </script>
 </body>

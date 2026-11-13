@@ -38,6 +38,7 @@ class Store:
                 loaded = json.load(f)
             self.data["home"].update(loaded.get("home", {}))
             self.data["vps"] = loaded.get("vps", [])
+            self.data["passkeys"] = loaded.get("passkeys", [])
         self._ensure_home_keys()
 
     # -------- persistence
