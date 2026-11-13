@@ -143,7 +143,8 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 
   <section data-p="server" hidden>
     <div class="card" style="margin-bottom:14px"><div class="row"><h2 style="margin:0">Службы на этом сервере</h2><span class="sp"></span>
-      <span class="muted" id="srvupd" style="font-size:12px"></span></div><div class="tw" id="srvsvc" style="margin-top:10px"></div></div>
+      <span class="muted" id="srvupd" style="font-size:12px"></span>
+      <button class="b p" id="srvdiag">Проверить доступ в домашнюю сеть</button></div><div class="tw" id="srvsvc" style="margin-top:10px"></div></div>
     <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr))">
       <div class="card" id="srvxray"></div>
       <div class="card" id="srvwg"></div>
@@ -502,6 +503,12 @@ function renderServer(){const S2=SRV,now=S2.time;
       <td class="mono">${bytes(p.rx)} / ${bytes(p.tx)}</td></tr>`).join('')+'</table></div>':'<div class="muted">Пиров нет</div>'}</div>`).join('');
   $('#srvwg').innerHTML=wh;
 }
+$('#srvdiag').onclick=async e=>{e.target.disabled=true;e.target.textContent='Проверяю…';
+  try{const r=await api('/api/server/diag',{method:'POST',body:'{}'});
+    modal(r.ok?'Домашняя сеть доступна':'Есть проблема',(r.hint?`<p><b>${esc(r.hint)}</b></p>`:'')+r.steps.map(st=>`<div style="margin-bottom:10px">
+      <span class="pill ${st.ok?'up':'down'}"><span class="dot"></span>${st.ok?'ok':'ошибка'}</span> <b>${esc(st.title)}</b>
+      <pre style="margin-top:6px">${esc(st.output||'(нет вывода)')}</pre></div>`).join(''))}
+  catch(err){toast(err.message)}finally{e.target.disabled=false;e.target.textContent='Проверить доступ в домашнюю сеть'}};
 $('#srvsvc').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
   if(b.dataset.log!=null){const i=b.dataset.log;srvOpen[i]=!srvOpen[i];$('#log'+i).hidden=!srvOpen[i];return}
   if(b.dataset.restart){if(!confirm('Перезапустить '+b.dataset.restart+'? Соединения через неё на пару секунд прервутся.'))return;

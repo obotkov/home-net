@@ -459,6 +459,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, {"error": "нет такого passkey"})
                 s.save()
                 return self._send(200, {"ok": True})
+            if method == "POST" and path == "/api/server/diag":
+                return self._send(200, server.diagnose(s))
             if method == "POST" and path == "/api/server/restart":
                 return self._send(200, server.restart(str(body.get("unit", ""))))
             if method == "POST" and path == "/api/vps/self":

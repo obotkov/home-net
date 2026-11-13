@@ -180,6 +180,47 @@ def status(store):
             "xray": _xray(), "tunnels": _tunnels()}
 
 
+def diagnose(store):
+    """Проверка цепочки VPS -> туннель -> дом прямо с сервера панели."""
+    home = store.home
+    v = next((x for x in store.vps if x.get("local")), None)
+    peer_ip = v["home_tun_ip"] if v else None
+    gw = home["lan_cidr"].split("/")[0].rsplit(".", 1)[0] + ".1"
+    steps = []
+    if peer_ip:
+        steps.append((f"ping {peer_ip} (роутер в туннеле)", ["ping", "-c", "3", "-W", "2", peer_ip]))
+    steps += [
+        (f"маршрут до {gw}", ["ip", "route", "get", gw]),
+        (f"ping {gw} (роутер в домашней сети)", ["ping", "-c", "3", "-W", "2", gw]),
+        (f"HTTP http://{gw}", ["curl", "-m", "5", "-s", "-o", "/dev/null", "-w", "HTTP %{http_code}\n", f"http://{gw}"]),
+    ]
+    out, ok_all = [], True
+    for title, cmd in steps:
+        if demo_mode():
+            code, text = 0, "[демо] ok\n"
+        else:
+            code, text = _run(cmd, timeout=15)
+            if cmd[0] == "curl" and text.strip() == "HTTP 000":
+                code = 1
+        ok_all &= code == 0
+        out.append({"title": title, "ok": code == 0, "output": text.strip()[-1500:]})
+    hint = None
+    by = {o["title"].split(" ")[0] + ("-tun" if "туннеле" in o["title"] else ""): o for o in out}
+    route = next(o for o in out if o["title"].startswith("маршрут"))
+    if not demo_mode() and not re.search(r"dev (awg|wg)", route["output"]):
+        ok_all = False
+        route["ok"] = False
+        hint = (f"Маршрут в домашнюю сеть {home['lan_cidr']} идёт не через туннель. Проверьте LAN-подсеть в Настройках "
+                "и нажмите «Переустановить» на карточке этого сервера.")
+    elif not all(o["ok"] for o in out if o["title"].startswith("ping")):
+        hint = ("Туннель до роутера поднят, но Keenetic не пускает трафик из него. В командной строке Keenetic "
+                "(my.keenetic.net/a) выполните «interface Wireguard0 security-level private», затем "
+                "«system configuration save» (имя подключения может быть Wireguard1, видно в «show interface»).")
+    elif not by.get("HTTP", {"ok": True})["ok"]:
+        hint = "Роутер отвечает на ping, но веб-страница не открылась: проверьте доступ к веб-интерфейсу в настройках Keenetic."
+    return {"ok": ok_all, "steps": out, "hint": hint}
+
+
 def restart(unit):
     if unit not in _units() and not demo_mode():
         raise ValueError("неизвестная служба")
