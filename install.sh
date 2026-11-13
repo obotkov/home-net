@@ -180,6 +180,13 @@ if [ "${NETADMIN_SKIP_DEPS:-0}" != 1 ]; then
   say "ставлю зависимости"
   if command -v apt-get >/dev/null; then
     export DEBIAN_FRONTEND=noninteractive
+    # недособранный модуль AmneziaWG (DKMS) от прошлой попытки ломает любой apt install: убираем его
+    st=$(dpkg-query -W -f='${Status}' amneziawg-dkms 2>/dev/null || true)
+    if [ -n "$st" ] && [ "$st" != "install ok installed" ] && [ "$st" != "unknown ok not-installed" ]; then
+      warn "убираю недособранный amneziawg-dkms ($st)"
+      apt-get purge -y -qq amneziawg amneziawg-dkms >/dev/null 2>&1 || dpkg --purge --force-all amneziawg amneziawg-dkms >/dev/null 2>&1 || true
+    fi
+    dpkg --configure -a >/dev/null 2>&1 || true
     apt-get update -qq
     apt-get install -y -qq python3 wireguard-tools bird2 curl tar iproute2 openssh-client sshpass >/dev/null
   elif command -v dnf >/dev/null; then

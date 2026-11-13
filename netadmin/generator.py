@@ -356,7 +356,7 @@ fi
 # если прошлый запуск оставил недособранный модуль, убираем его, чтобы apt не падал
 ST=$(dpkg-query -W -f='${{Status}}' amneziawg-dkms 2>/dev/null || true)
 if [ -n "$ST" ] && [ "$ST" != "install ok installed" ] && [ "$ST" != "unknown ok not-installed" ]; then
-  apt-get purge -y -qq amneziawg amneziawg-dkms >/dev/null 2>&1 || true
+  apt-get purge -y -qq amneziawg amneziawg-dkms >/dev/null 2>&1 || dpkg --purge --force-all amneziawg amneziawg-dkms >/dev/null 2>&1 || true
 fi
 dpkg --configure -a >/dev/null 2>&1 || true
 apt-get install -y -qq amneziawg-tools >/dev/null
@@ -367,7 +367,7 @@ if ! modprobe amneziawg 2>/dev/null; then
   else
     echo "   модуль ядра для $(uname -r) не собрался, ставлю amneziawg-go (без модуля ядра)"
     tail -n 5 /tmp/awg-dkms.err 2>/dev/null || true
-    apt-get purge -y -qq amneziawg amneziawg-dkms >/dev/null 2>&1 || true
+    apt-get purge -y -qq amneziawg amneziawg-dkms >/dev/null 2>&1 || dpkg --purge --force-all amneziawg amneziawg-dkms >/dev/null 2>&1 || true
     dpkg --configure -a >/dev/null 2>&1 || true
   fi
 fi
