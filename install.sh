@@ -93,7 +93,6 @@ fi
 # Enter оставляет значение в [скобках] (с прошлой установки или по умолчанию).
 S_DOMAIN=$(get_env "$ENV_FILE" NETADMIN_DOMAIN); S_EMAIL=$(get_env "$ENV_FILE" NETADMIN_EMAIL)
 S_ACME=$(get_env "$ENV_FILE" NETADMIN_ACME);     S_ALLOW=$(get_env "$ENV_FILE" NETADMIN_ALLOW)
-HAVE_CF=0; grep -q '^CF_API_TOKEN=.' "$CADDY_ENV" 2>/dev/null && HAVE_CF=1
 
 TTY=0
 if [ "${NETADMIN_NONINTERACTIVE:-0}" != 1 ] && [ -z "$DOMAIN" ] && [ "$NO_DOMAIN" = 0 ] \
@@ -134,37 +133,9 @@ if [ "$TTY" = 1 ]; then
       [ -z "$EMAIL" ] || [[ "$EMAIL" =~ ^[^@]+@[^@]+\.[^@]+$ ]] && break
       echo "  некорректный email" > /dev/tty
     done
-    {
-      echo
-      echo " Как Let's Encrypt проверит, что домен ваш:"
-      echo "   1) http       — у узла белый IP, порты 80 и 443 проброшены на него,"
-      echo "                   A-запись домена указывает на белый IP"
-      echo "   2) cloudflare — через DNS Cloudflare: порты не нужны, работает за CGNAT,"
-      echo "                   A-запись может указывать на LAN-адрес узла"
-    } > /dev/tty
-    def=1; [ "$S_ACME" = cloudflare ] && def=2
-    while :; do ask "Способ (1/2)" "$def"; case "$REPLY" in 1|http) ACME=http; break ;; 2|cloudflare) ACME=cloudflare; break ;; esac; done
-    if [ "$ACME" = cloudflare ]; then
-      {
-        echo " Токен: Cloudflare → My Profile → API Tokens → Create Token → «Edit zone DNS»."
-        echo " Запись домена в Cloudflare должна быть «DNS only» (серое облако)."
-      } > /dev/tty
-      while :; do
-        if [ "$HAVE_CF" = 1 ]; then printf '\033[1mAPI-токен Cloudflare\033[0m [Enter — оставить сохранённый]: ' > /dev/tty
-        else printf '\033[1mAPI-токен Cloudflare\033[0m (ввод скрыт): ' > /dev/tty; fi
-        IFS= read -rs CF_TOKEN < /dev/tty || CF_TOKEN=""; echo > /dev/tty
-        CF_TOKEN=$(printf '%s' "$CF_TOKEN" | tr -d '[:space:]')
-        { [ -n "$CF_TOKEN" ] || [ "$HAVE_CF" = 1 ]; } && break
-        echo "  токен обязателен для способа cloudflare" > /dev/tty
-      done
-      if [ -n "$CF_TOKEN" ]; then
-        if curl -fsS --max-time 10 -H "Authorization: Bearer $CF_TOKEN" https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null | grep -q '"active"'; then
-          echo "  токен действителен" > /dev/tty
-        else
-          echo "  ! Cloudflare не подтвердил токен (проверьте права Zone:DNS:Edit). Продолжаю, Caddy покажет ошибку в журнале." > /dev/tty
-        fi
-      fi
-    fi
+    # Сертификат выпускается сразу по HTTP-проверке (A-запись домена → этот узел, порт 80 доступен).
+    # DNS-проверка через Cloudflare осталась только флагом --acme cloudflare.
+    ACME=${S_ACME:-http}
     {
       echo
       echo " Кому открыть панель по домену:"
@@ -181,7 +152,7 @@ if [ "$TTY" = 1 ]; then
   {
     echo
     if [ -n "$DOMAIN" ]; then
-      echo " Итог: https://$DOMAIN · проверка: $ACME · доступ: $([ "$ALLOW" = any ] && echo всем || echo 'LAN/VPN')${EMAIL:+ · $EMAIL}"
+      echo " Итог: https://$DOMAIN · доступ: $([ "$ALLOW" = any ] && echo всем || echo 'LAN/VPN')${EMAIL:+ · $EMAIL}"
     elif [ "$NO_DOMAIN" = 1 ]; then echo " Итог: домен будет убран, панель по http://IP:8088"
     else echo " Итог: без домена, панель по http://IP:8088"; fi
   } > /dev/tty
