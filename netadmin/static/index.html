@@ -435,7 +435,7 @@ async function updStatus(){
   }catch(e){/* панель перезапускается — ждём */}
 }
 $('#updcheck').onclick=()=>updCheck(false);
-$('#updapply').onclick=async()=>{if(!confirm('Скачать и установить обновление? Панель перезапустится, это займёт до пары минут.'))return;
+$('#updapply').onclick=async()=>{
   try{updFrom=UPD&&UPD.current.sha||'';await api('/api/update/apply',{method:'POST',body:'{}'});$('#updapply').disabled=true;
     $('#updres').innerHTML='<span class="pill degraded"><span class="dot"></span>Обновляю… панель перезапустится</span>';
     updPoll=setInterval(updStatus,2000)}catch(e){toast(e.message)}};
