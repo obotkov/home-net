@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Домашняя сеть</title>
+<style>
+:root{
+  --bg:#f5f6f8;--panel:#fff;--ink:#14171c;--muted:#5d6672;--line:#e3e6eb;--soft:#eef1f5;
+  --accent:#2f6fed;--accent-ink:#fff;--ok:#1f9d55;--warn:#c98a00;--bad:#d64545;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1216;--panel:#171b21;--ink:#e7eaee;--muted:#98a2ae;--line:#272d36;--soft:#1e232a;
+  --accent:#5b8dff;--accent-ink:#0b0e12;--ok:#3fbf72;--warn:#e0a82e;--bad:#ef6a6a;}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:14px 24px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav button{background:none;border:0;color:var(--muted);padding:6px 12px;border-radius:8px;font:inherit;cursor:pointer}
+nav button.on{background:var(--soft);color:var(--ink);font-weight:600}
+.sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:2px 9px;border-radius:99px;background:var(--soft);color:var(--muted);white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.up .dot,.dot.up{background:var(--ok)} .degraded .dot,.dot.degraded{background:var(--warn)} .down .dot,.dot.down{background:var(--bad)}
+main{max-width:1180px;margin:0 auto;padding:24px 16px 60px}
+.banner{background:color-mix(in srgb,var(--warn) 14%,transparent);border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);padding:10px 14px;border-radius:10px;margin-bottom:18px;font-size:13px}
+.grid{display:grid;gap:14px}
+.stats{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.stat .k{color:var(--muted);font-size:12px}.stat .v{font-size:24px;font-weight:650;margin-top:2px;font-variant-numeric:tabular-nums}
+h2{font-size:15px;margin:0 0 12px;font-weight:650}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:500;font-size:12px;padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+.mono{font-family:var(--mono);font-size:12.5px}
+td.mono,td .mono{white-space:nowrap}
+.muted{color:var(--muted)}
+.tw{overflow-x:auto}
+button.b{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:6px 12px;cursor:pointer;white-space:nowrap}
+button.b:hover{background:var(--soft)}
+button.p{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+button.p:hover{filter:brightness(1.08);background:var(--accent)}
+button.d{color:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+form.f{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+input{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+input:focus{outline:2px solid color-mix(in srgb,var(--accent) 50%,transparent);border-color:var(--accent)}
+.vps{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px;margin:10px 0 14px}
+.kv dt{color:var(--muted)} .kv dd{margin:0;font-family:var(--mono);font-size:12.5px;overflow-wrap:anywhere}
+pre{background:var(--soft);border-radius:8px;padding:12px;overflow:auto;font:12px/1.5 var(--mono);margin:0;max-height:420px;white-space:pre}
+.topo{width:100%;height:auto;display:block}
+.topo text{fill:var(--ink);font-size:12px}
+.topo .sub{fill:var(--muted);font-size:11px}
+dialog{border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--ink);padding:0;width:min(860px,calc(100vw - 32px));max-height:calc(100vh - 48px)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.dh{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line)}
+.db{padding:16px 18px;overflow:auto;max-height:calc(100vh - 140px)}
+.tabs2{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}
+.tabs2 button{font:12px var(--mono);background:var(--soft);border:0;color:var(--muted);border-radius:6px;padding:4px 9px;cursor:pointer}
+.tabs2 button.on{background:var(--accent);color:var(--accent-ink)}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:9px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
+.toast.on{opacity:1}
+.steps{margin:0;padding-left:20px}.steps li{margin:6px 0}
+.empty{color:var(--muted);text-align:center;padding:30px}
+@media (max-width:640px){header{padding:12px 16px} main{padding:16px 16px 50px} .vps{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Домашняя сеть</h1>
+  <nav id="nav">
+    <button data-t="overview" class="on">Обзор</button>
+    <button data-t="devices">Устройства</button>
+    <button data-t="vps">VPS</button>
+    <button data-t="routes">Маршруты</button>
+    <button data-t="settings">Настройки</button>
+  </nav>
+  <span class="sp"></span>
+  <span class="pill" id="updated">загрузка…</span>
+</header>
+<main>
+  <div id="demo" class="banner" hidden>Демо-режим: показаны примерные данные (на узле нет <b>wg</b> или задан NETADMIN_DEMO=1). Добавление VPS и генерация конфигов работают по-настоящему.</div>
+
+  <section data-p="overview">
+    <div class="grid stats" id="stats"></div>
+    <div class="grid" style="grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)" id="ovgrid">
+      <div class="card"><h2>Топология</h2><div id="topo"></div></div>
+      <div class="card"><h2>Линки</h2><div class="tw" id="links"></div></div>
+    </div>
+  </section>
+
+  <section data-p="devices" hidden>
+    <div class="card">
+      <div class="row" style="margin-bottom:10px"><h2 style="margin:0">Устройства в локальной сети</h2><span class="sp"></span>
+        <input id="devq" placeholder="Поиск: имя, IP, MAC" style="min-width:220px"></div>
+      <div class="tw" id="devices"></div>
+    </div>
+  </section>
+
+  <section data-p="vps" hidden>
+    <div class="card" style="margin-bottom:14px">
+      <div class="row"><h2 style="margin:0">Добавить VPS</h2><span class="sp"></span>
+        <span class="muted" style="font-size:12px">Debian/Ubuntu, доступ по SSH-ключу</span></div>
+      <form class="f" id="addf" style="margin-top:12px" autocomplete="off">
+        <label>Имя (латиница)<input name="name" required pattern="[a-z][a-z0-9-]{0,11}" placeholder="ams"></label>
+        <label>Подпись<input name="label" placeholder="Амстердам"></label>
+        <label>Публичный IP<input name="public_ip" required placeholder="203.0.113.10"></label>
+        <label>SSH пользователь<input name="ssh_user" value="root"></label>
+        <label>SSH порт<input name="ssh_port" type="number" value="22"></label>
+        <label>Порт Xray<input name="xray_port" type="number" value="443"></label>
+        <label>SNI для REALITY<input name="sni" value="www.microsoft.com"></label>
+        <label>Стоимость OSPF<input name="cost" type="number" value="10"></label>
+        <div style="display:flex;align-items:flex-end"><button class="b p" type="submit">Добавить</button></div>
+      </form>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="row"><div><b>Домашний узел</b> <span class="muted" id="applyinfo"></span></div><span class="sp"></span>
+        <button class="b" id="homefiles">Конфиги дома</button>
+        <button class="b p" id="applyhome">Применить дома</button></div>
+      <pre id="applylog" hidden style="margin-top:12px"></pre>
+    </div>
+    <div class="vps" id="vpslist"></div>
+  </section>
+
+  <section data-p="routes" hidden>
+    <div class="grid">
+      <div class="card"><h2>OSPF-соседи</h2><div class="tw" id="nbrs"></div></div>
+      <div class="card"><h2>Таблица маршрутов BIRD</h2><div class="tw" id="routes"></div></div>
+    </div>
+  </section>
+
+  <section data-p="settings" hidden>
+    <div class="card">
+      <h2>Параметры домашнего узла</h2>
+      <form class="f" id="homef">
+        <label>Имя<input name="name"></label>
+        <label>LAN-интерфейс<input name="lan_if"></label>
+        <label>LAN-подсеть<input name="lan_cidr"></label>
+        <label>MTU WireGuard<input name="wg_mtu" type="number"></label>
+        <label>Стоимость OSPF по умолчанию<input name="ospf_cost" type="number"></label>
+        <div style="display:flex;align-items:flex-end"><button class="b p">Сохранить</button></div>
+      </form>
+      <p class="muted" style="font-size:12px;margin:14px 0 0">После изменения нажмите «Применить дома» на вкладке VPS и переразверните VPS, если меняли MTU или стоимость.</p>
+    </div>
+  </section>
+</main>
+
+<dialog id="dlg"><div class="dh"><b id="dlgt"></b><span class="sp"></span><button class="b" onclick="dlg.close()">Закрыть</button></div><div class="db" id="dlgb"></div></dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const H={'X-Requested-With':'netadmin','Content-Type':'application/json'};
+let S=null,V=[],tab='overview';
+try{tab=localStorage.getItem('na-tab')||tab}catch(e){}
+
+async function api(path,opt={}){
+  const r=await fetch(path,{...opt,headers:{...H,...(opt.headers||{})}});
+  const ct=r.headers.get('content-type')||'';
+  const body=ct.includes('json')?await r.json():await r.text();
+  if(!r.ok) throw new Error(body.error||r.statusText);
+  return body;
+}
+function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('on');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('on'),2200)}
+const bytes=n=>{if(!n)return '0';const u=['Б','КБ','МБ','ГБ','ТБ'];let i=0;while(n>=1024&&i<4){n/=1024;i++}return n.toFixed(i?1:0)+' '+u[i]};
+const ago=s=>s==null?'—':s<60?s+' с назад':s<3600?Math.round(s/60)+' мин назад':Math.round(s/3600)+' ч назад';
+const stTxt={up:'работает',degraded:'частично',down:'нет связи'};
+const depTxt={never:'не развёрнут',running:'разворачивается…',ok:'развёрнут',error:'ошибка'};
+
+function show(t){tab=t;try{localStorage.setItem('na-tab',t)}catch(e){}
+  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  document.querySelectorAll('section[data-p]').forEach(s=>s.hidden=s.dataset.p!==t);}
+$('#nav').onclick=e=>{if(e.target.dataset.t)show(e.target.dataset.t)};
+
+async function load(){
+  try{[S,V]=await Promise.all([api('/api/state'),api('/api/vps')]);render();
+    $('#updated').innerHTML='<span class="dot up"></span>обновлено '+new Date().toLocaleTimeString('ru-RU')}
+  catch(e){$('#updated').innerHTML='<span class="dot down"></span>'+esc(e.message)}
+}
+
+function render(){
+  $('#demo').hidden=!S.demo;
+  const up=S.links.filter(l=>l.status==='up').length, on=S.devices.filter(d=>d.online).length;
+  const svc=n=>`<span class="pill ${S.services[n]==='active'?'up':'down'}"><span class="dot"></span>${esc(S.services[n])}</span>`;
+  $('#stats').innerHTML=[
+    ['Линки к VPS',`${up} / ${S.links.length}`],['Устройства онлайн',`${on} / ${S.devices.length}`],
+    ['OSPF-соседи',S.ospf_neighbors.length],['Xray',svc('xray')],['BIRD',svc('bird')]
+  ].map(([k,v])=>`<div class="card stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  renderTopo();renderLinks();renderDevices();renderVps();renderRoutes();
+  const f=$('#homef');if(document.activeElement?.form!==f)for(const k in S.home)if(f[k])f[k].value=S.home[k];
+  const a=S.home_apply;$('#applyinfo').textContent=`· ${S.home.lan_cidr} через ${S.home.lan_if} · router id ${S.home.router_id}`+(a.at?` · применено ${new Date(a.at*1000).toLocaleString('ru-RU')}`:'');
+  $('#applylog').hidden=!a.log;$('#applylog').textContent=a.log;
+}
+
+function renderTopo(){
+  const L=S.links,W=560,Hh=Math.max(300,L.length?320:220),cx=150,cy=Hh/2;
+  const col={up:'var(--ok)',degraded:'var(--warn)',down:'var(--bad)'};
+  let s=`<svg class="topo" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Топология сети">`;
+  const pos=L.map((l,i)=>{const a=L.length===1?0:(-Math.PI/2.6)+(i*(Math.PI/1.3)/(L.length-1));return[cx+260*Math.cos(a)+40,cy+(Hh/2-40)*Math.sin(a)]});
+  L.forEach((l,i)=>{const[x,y]=pos[i];s+=`<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="${col[l.status]}" stroke-width="2.5" ${l.status==='down'?'stroke-dasharray="6 5"':''}/>`});
+  s+=`<circle cx="${cx-80}" cy="${cy}" r="26" fill="var(--soft)" stroke="var(--line)"/><text x="${cx-80}" y="${cy+4}" text-anchor="middle">LAN</text>
+      <text class="sub" x="${cx-80}" y="${cy+44}" text-anchor="middle">${S.devices.filter(d=>d.online).length} онлайн</text>
+      <line x1="${cx-54}" y1="${cy}" x2="${cx-34}" y2="${cy}" stroke="var(--line)" stroke-width="2"/>
+      <circle cx="${cx}" cy="${cy}" r="34" fill="var(--accent)"/><text x="${cx}" y="${cy+4}" text-anchor="middle" style="fill:var(--accent-ink);font-weight:600">${esc(S.home.name)}</text>
+      <text class="sub" x="${cx}" y="${cy+52}" text-anchor="middle">${esc(S.home.lan_cidr)}</text>`;
+  L.forEach((l,i)=>{const[x,y]=pos[i];s+=`<circle cx="${x}" cy="${y}" r="22" fill="var(--panel)" stroke="${col[l.status]}" stroke-width="2.5"/>
+    <text x="${x}" y="${y+4}" text-anchor="middle" style="font-weight:600">${esc(l.name)}</text>
+    <text class="sub" x="${x+30}" y="${y-2}">${esc(l.label)}</text><text class="sub" x="${x+30}" y="${y+12}">${esc(l.public_ip)}</text>`});
+  if(!L.length)s+=`<text class="sub" x="${W-30}" y="${cy+4}" text-anchor="end">Добавьте первый VPS на вкладке «VPS»</text>`;
+  $('#topo').innerHTML=s+'</svg>';
+}
+
+function renderLinks(){
+  if(!S.links.length){$('#links').innerHTML='<div class="empty">Пока нет VPS</div>';return}
+  $('#links').innerHTML=`<table><tr><th>VPS</th><th>Статус</th><th>Handshake</th><th>OSPF</th><th>Трафик ↓/↑</th></tr>`+
+    S.links.map(l=>`<tr><td><b>${esc(l.name)}</b><div class="muted mono">${esc(l.iface)}</div></td>
+    <td><span class="pill ${l.status}"><span class="dot"></span>${stTxt[l.status]}</span></td>
+    <td>${ago(l.handshake_ago)}</td><td class="mono">${esc(l.ospf_state||'—')}</td>
+    <td class="mono">${bytes(l.rx)} / ${bytes(l.tx)}</td></tr>`).join('')+'</table>';
+}
+
+function renderDevices(){
+  const q=$('#devq').value.toLowerCase();
+  const D=S.devices.filter(d=>!q||[d.ip,d.mac,d.hostname].some(x=>(x||'').toLowerCase().includes(q)));
+  $('#devices').innerHTML=D.length?`<table><tr><th>Имя</th><th>IP</th><th>MAC</th><th>Состояние</th></tr>`+
+    D.map(d=>`<tr><td>${d.hostname?esc(d.hostname):'<span class="muted">без имени</span>'}</td><td class="mono">${esc(d.ip)}</td>
+    <td class="mono muted">${esc(d.mac||'—')}</td><td><span class="pill ${d.online?'up':'down'}"><span class="dot"></span>${d.online?'онлайн':'офлайн'}</span></td></tr>`).join('')+'</table>'
+    :'<div class="empty">Ничего не найдено</div>';
+}
+$('#devq').oninput=renderDevices;
+
+function renderVps(){
+  if(!V.length){$('#vpslist').innerHTML='<div class="card empty" style="grid-column:1/-1">Добавьте первый VPS через форму выше</div>';return}
+  $('#vpslist').innerHTML=V.map(v=>{const l=S.links.find(x=>x.id===v.id)||{};const d=v.deploy||{};
+    return `<div class="card"><div class="row"><b style="font-size:15px">${esc(v.label)}</b><span class="muted mono">${esc(v.name)}</span><span class="sp"></span>
+      <span class="pill ${l.status||'down'}"><span class="dot"></span>${stTxt[l.status]||'—'}</span></div>
+      <dl class="kv"><dt>Публичный IP</dt><dd>${esc(v.public_ip)}:${v.xray_port}</dd>
+      <dt>Туннель</dt><dd>${esc(v.home_tun_ip)} ↔ ${esc(v.vps_tun_ip)} /31</dd>
+      <dt>Интерфейс</dt><dd>${esc(v.iface)} → 127.0.0.1:${v.local_port}</dd>
+      <dt>Router ID</dt><dd>${esc(v.vps_router_id)} · cost ${v.cost}</dd>
+      <dt>Handshake</dt><dd>${ago(l.handshake_ago)}</dd>
+      <dt>Развёртывание</dt><dd>${depTxt[d.status]||esc(d.status)}${d.at?' · '+new Date(d.at*1000).toLocaleString('ru-RU'):''}</dd></dl>
+      <div class="row"><button class="b p" data-a="deploy" data-id="${v.id}" ${d.status==='running'?'disabled':''}>Развернуть по SSH</button>
+      <button class="b" data-a="files" data-id="${v.id}">Конфиги</button>
+      <button class="b" data-a="client" data-id="${v.id}">Доступ с телефона</button>
+      <button class="b d" data-a="del" data-id="${v.id}">Удалить</button></div>
+      ${d.log?`<details style="margin-top:10px" ${d.status==='running'||d.status==='error'?'open':''}><summary class="muted">Лог развёртывания</summary><pre style="margin-top:8px">${esc(d.log)}</pre></details>`:''}
+    </div>`}).join('');
+}
+
+function renderRoutes(){
+  $('#nbrs').innerHTML=S.ospf_neighbors.length?`<table><tr><th>Router ID</th><th>Состояние</th><th>Интерфейс</th><th>Адрес</th><th>Dead</th></tr>`+
+    S.ospf_neighbors.map(n=>`<tr><td class="mono">${esc(n.router_id)}</td><td class="mono">${esc(n.state)}</td><td class="mono">${esc(n.iface)}</td><td class="mono">${esc(n.ip)}</td><td class="mono">${esc(n.dead)}</td></tr>`).join('')+'</table>'
+    :'<div class="empty">Соседей нет</div>';
+  $('#routes').innerHTML=S.routes.length?`<table><tr><th>Сеть</th><th>Протокол</th><th>Через</th><th>Интерфейс</th><th>Метрика</th></tr>`+
+    S.routes.map(r=>`<tr><td class="mono">${esc(r.net)}${r.primary?' <b>*</b>':''}</td><td class="mono">${esc(r.proto)}</td><td class="mono">${esc(r.via||'напрямую')}</td><td class="mono">${esc(r.iface||'')}</td><td class="mono">${esc(r.metric)}</td></tr>`).join('')+'</table>'
+    :'<div class="empty">Маршрутов нет</div>';
+}
+
+function modal(title,html){$('#dlgt').textContent=title;$('#dlgb').innerHTML=html;dlg.showModal()}
+function filesModal(title,files){
+  const names=Object.keys(files);let cur=names[0];
+  const draw=()=>{modal(title,`<div class="tabs2">${names.map(n=>`<button data-f="${esc(n)}" class="${n===cur?'on':''}">${esc(n)}</button>`).join('')}</div>
+    <div class="row" style="margin-bottom:8px"><span class="muted" style="font-size:12px">Содержит приватные ключи, не публикуйте</span><span class="sp"></span>
+    <button class="b" id="cp">Копировать</button><button class="b" id="dl">Скачать</button></div><pre>${esc(files[cur])}</pre>`);
+    $('#dlgb .tabs2').onclick=e=>{if(e.target.dataset.f){cur=e.target.dataset.f;draw()}};
+    $('#cp').onclick=()=>navigator.clipboard.writeText(files[cur]).then(()=>toast('Скопировано'));
+    $('#dl').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([files[cur]]));a.download=cur.split('/').pop();a.click()};};
+  draw();
+}
+
+$('#vpslist').onclick=async e=>{const b=e.target.closest('button[data-a]');if(!b)return;const v=V.find(x=>x.id===b.dataset.id);
+  try{
+    if(b.dataset.a==='files')filesModal('Конфиги '+v.name,await api(`/api/vps/${v.id}/files`));
+    if(b.dataset.a==='client')modal('Доступ с телефона через '+v.label,`<ol class="steps">
+      <li>Установите клиент с поддержкой VLESS + REALITY: v2rayNG или Hiddify (Android), Streisand или FoXray (iOS), v2rayN или Hiddify (Windows/macOS).</li>
+      <li>Импортируйте ссылку ниже (кнопка «Импорт из буфера»).</li>
+      <li>Домашняя сеть ${esc(S.home.lan_cidr)} будет доступна через VPS → туннель → дом. Интернет пойдёт через VPS.</li></ol>
+      <pre style="white-space:pre-wrap;word-break:break-all">${esc(v.client_link)}</pre>
+      <div class="row" style="margin-top:10px"><button class="b p" id="cpl">Копировать ссылку</button></div>`),$('#cpl')&&($('#cpl').onclick=()=>navigator.clipboard.writeText(v.client_link).then(()=>toast('Скопировано')));
+    if(b.dataset.a==='deploy'){if(!confirm(`Подключиться к ${v.ssh_user}@${v.public_ip} по SSH и установить WireGuard, Xray, BIRD? Существующие /etc/bird/bird.conf и конфиг Xray на VPS будут перезаписаны.`))return;
+      await api(`/api/vps/${v.id}/deploy`,{method:'POST',body:'{}'});toast('Развёртывание запущено');load()}
+    if(b.dataset.a==='del'){if(!confirm(`Удалить ${v.name}? Ключи этого линка будут потеряны. После удаления нажмите «Применить дома».`))return;
+      await api(`/api/vps/${v.id}`,{method:'DELETE'});toast('Удалён');load()}
+  }catch(err){toast(err.message)}
+};
+
+$('#addf').onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.target));
+  try{const v=await api('/api/vps',{method:'POST',body:JSON.stringify(f)});e.target.reset();
+    e.target.ssh_user.value='root';e.target.ssh_port.value=22;e.target.xray_port.value=443;e.target.sni.value='www.microsoft.com';e.target.cost.value=S.home.ospf_cost;
+    await load();modal('VPS «'+v.label+'» добавлен',`<p>Адреса и ключи сгенерированы: туннель <span class="mono">${esc(v.home_tun_ip)} ↔ ${esc(v.vps_tun_ip)}</span>, локальный порт Xray <span class="mono">${v.local_port}</span>.</p>
+      <ol class="steps"><li><b>Развернуть VPS.</b> Кнопка «Развернуть по SSH» на карточке (нужен SSH-ключ этого узла на VPS) или вручную: <pre style="margin-top:6px">ssh ${esc(v.ssh_user)}@${esc(v.public_ip)} 'sudo bash -s' &lt; bootstrap-${esc(v.name)}.sh</pre></li>
+      <li><b>Применить дома.</b> Кнопка «Применить дома» поднимет интерфейс <span class="mono">${esc(v.iface)}</span>, добавит VPS в Xray и BIRD.</li>
+      <li>Через минуту линк станет зелёным, а OSPF-сосед появится на вкладке «Маршруты».</li></ol>
+      <div class="row"><a class="b" href="/api/vps/${v.id}/bootstrap.sh" style="text-decoration:none;color:inherit">Скачать bootstrap.sh</a></div>`)}
+  catch(err){toast(err.message)}};
+
+$('#applyhome').onclick=async()=>{try{await api('/api/home/apply',{method:'POST',body:'{}'});toast(S.apply_enabled?'Применение запущено':'Файлы сгенерированы');load()}catch(e){toast(e.message)}};
+$('#homefiles').onclick=async()=>{try{filesModal('Конфиги домашнего узла',await api('/api/home/files'))}catch(e){toast(e.message)}};
+$('#homef').onsubmit=async e=>{e.preventDefault();try{await api('/api/home',{method:'PATCH',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});toast('Сохранено');load()}catch(err){toast(err.message)}};
+
+const mq=matchMedia('(max-width:860px)');const lay=()=>$('#ovgrid').style.gridTemplateColumns=mq.matches?'minmax(0,1fr)':'minmax(0,1.3fr) minmax(0,1fr)';mq.onchange=lay;lay();
+show(tab);load();setInterval(()=>{if(!dlg.open)load()},5000);
+</script>
+</body>
+</html>
