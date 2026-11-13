@@ -2,12 +2,11 @@
 # Установка / обновление netadmin одной командой:
 #   curl -fsSL https://raw.githubusercontent.com/obotkov/home-net/main/install.sh | sudo bash
 #
-# С доменом и сертификатом Let's Encrypt (Caddy получает и сам продлевает его):
-#   curl -fsSL .../install.sh | sudo bash -s -- --domain panel.example.com --email me@example.com
-#   ... --acme cloudflare --cf-token <API-токен>     # DNS-01: не нужен белый IP и открытые порты
+# Скрипт спросит в терминале домен, email и способ получения сертификата Let's Encrypt
+# (Caddy получает и сам продлевает его). Enter оставляет текущие значения.
 #
 # Повторный запуск обновляет код, не трогая состояние и ключи (/var/lib/netadmin).
-# Параметры (флагом или переменной окружения):
+# Для автоматизации без вопросов (флагом или переменной окружения, или NETADMIN_NONINTERACTIVE=1):
 #   --domain    NETADMIN_DOMAIN     домен панели; без него панель работает по http://IP:8088
 #   --email     NETADMIN_EMAIL      почта для Let's Encrypt (уведомления об истечении)
 #   --acme      NETADMIN_ACME       http (по умолчанию, нужны порты 80/443 из интернета) | cloudflare
@@ -50,7 +49,7 @@ while [ $# -gt 0 ]; do
     --allow) ALLOW="${2:?}"; shift 2 ;;
     --no-domain) NO_DOMAIN=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
-    -h|--help) sed -n '2,24p' "$0" 2>/dev/null || echo "см. README"; exit 0 ;;
+    -h|--help) sed -n '2,23p' "$0" 2>/dev/null || echo "см. README"; exit 0 ;;
     *) die "неизвестный параметр: $1" ;;
   esac
 done
@@ -89,27 +88,112 @@ if [ "$UNINSTALL" = 1 ]; then
   exit 0
 fi
 
-# Домен из прошлой установки, если не передан сейчас
-if [ "$NO_DOMAIN" = 0 ] && [ -z "$DOMAIN" ]; then
-  DOMAIN=$(get_env "$ENV_FILE" NETADMIN_DOMAIN)
-  if [ -z "$DOMAIN" ] && [ ! -f "$ENV_FILE" ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
-    printf 'Домен для панели (Enter — без домена, по IP): ' > /dev/tty
-    read -r DOMAIN < /dev/tty || DOMAIN=""
-    if [ -n "$DOMAIN" ] && [ -z "$EMAIL" ]; then
-      printf 'Email для Let'"'"'s Encrypt: ' > /dev/tty; read -r EMAIL < /dev/tty || EMAIL=""
+# ---------------------------------------------------------------- мастер настройки в терминале
+# При обычном запуске (curl ... | sudo bash) вопросы задаются через /dev/tty.
+# Enter оставляет значение в [скобках] (с прошлой установки или по умолчанию).
+S_DOMAIN=$(get_env "$ENV_FILE" NETADMIN_DOMAIN); S_EMAIL=$(get_env "$ENV_FILE" NETADMIN_EMAIL)
+S_ACME=$(get_env "$ENV_FILE" NETADMIN_ACME);     S_ALLOW=$(get_env "$ENV_FILE" NETADMIN_ALLOW)
+HAVE_CF=0; grep -q '^CF_API_TOKEN=.' "$CADDY_ENV" 2>/dev/null && HAVE_CF=1
+
+TTY=0
+if [ "${NETADMIN_NONINTERACTIVE:-0}" != 1 ] && [ -z "$DOMAIN" ] && [ "$NO_DOMAIN" = 0 ] \
+   && { : </dev/tty; } 2>/dev/null && [ -w /dev/tty ]; then TTY=1; fi
+
+ask() {  # ask "Вопрос" "по умолчанию" -> REPLY
+  local q=$1 def=${2:-}
+  if [ -n "$def" ]; then printf '\033[1m%s\033[0m [%s]: ' "$q" "$def" > /dev/tty
+  else printf '\033[1m%s\033[0m: ' "$q" > /dev/tty; fi
+  IFS= read -r REPLY < /dev/tty || REPLY=""
+  REPLY=$(printf '%s' "$REPLY" | tr -d '[:space:]')
+  [ -z "$REPLY" ] && REPLY=$def
+  return 0
+}
+
+if [ "$TTY" = 1 ]; then
+  {
+    echo
+    echo "────────────────────────────────────────────────────────────"
+    echo " netadmin — настройка"
+    echo "────────────────────────────────────────────────────────────"
+    echo " Панель можно открыть по домену с HTTPS (сертификат Let's Encrypt,"
+    echo " продлевается автоматически). Без домена она работает по http://IP:8088."
+    echo
+  } > /dev/tty
+  while :; do
+    if [ -n "$S_DOMAIN" ]; then hint="Enter — оставить, «-» — убрать домен"; else hint="Enter — без домена"; fi
+    ask "Домен панели ($hint)" "$S_DOMAIN"
+    DOMAIN=$REPLY
+    if [ "$DOMAIN" = "-" ]; then DOMAIN=""; NO_DOMAIN=1; break; fi
+    [ -z "$DOMAIN" ] && break
+    [[ "$DOMAIN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] && break
+    echo "  не похоже на домен, пример: panel.example.com" > /dev/tty
+  done
+  if [ -n "$DOMAIN" ]; then
+    while :; do
+      ask "Email для Let's Encrypt (придут предупреждения об истечении)" "$S_EMAIL"; EMAIL=$REPLY
+      [ -z "$EMAIL" ] || [[ "$EMAIL" =~ ^[^@]+@[^@]+\.[^@]+$ ]] && break
+      echo "  некорректный email" > /dev/tty
+    done
+    {
+      echo
+      echo " Как Let's Encrypt проверит, что домен ваш:"
+      echo "   1) http       — у узла белый IP, порты 80 и 443 проброшены на него,"
+      echo "                   A-запись домена указывает на белый IP"
+      echo "   2) cloudflare — через DNS Cloudflare: порты не нужны, работает за CGNAT,"
+      echo "                   A-запись может указывать на LAN-адрес узла"
+    } > /dev/tty
+    def=1; [ "$S_ACME" = cloudflare ] && def=2
+    while :; do ask "Способ (1/2)" "$def"; case "$REPLY" in 1|http) ACME=http; break ;; 2|cloudflare) ACME=cloudflare; break ;; esac; done
+    if [ "$ACME" = cloudflare ]; then
+      {
+        echo " Токен: Cloudflare → My Profile → API Tokens → Create Token → «Edit zone DNS»."
+        echo " Запись домена в Cloudflare должна быть «DNS only» (серое облако)."
+      } > /dev/tty
+      while :; do
+        if [ "$HAVE_CF" = 1 ]; then printf '\033[1mAPI-токен Cloudflare\033[0m [Enter — оставить сохранённый]: ' > /dev/tty
+        else printf '\033[1mAPI-токен Cloudflare\033[0m (ввод скрыт): ' > /dev/tty; fi
+        IFS= read -rs CF_TOKEN < /dev/tty || CF_TOKEN=""; echo > /dev/tty
+        CF_TOKEN=$(printf '%s' "$CF_TOKEN" | tr -d '[:space:]')
+        { [ -n "$CF_TOKEN" ] || [ "$HAVE_CF" = 1 ]; } && break
+        echo "  токен обязателен для способа cloudflare" > /dev/tty
+      done
+      if [ -n "$CF_TOKEN" ]; then
+        if curl -fsS --max-time 10 -H "Authorization: Bearer $CF_TOKEN" https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null | grep -q '"active"'; then
+          echo "  токен действителен" > /dev/tty
+        else
+          echo "  ! Cloudflare не подтвердил токен (проверьте права Zone:DNS:Edit). Продолжаю, Caddy покажет ошибку в журнале." > /dev/tty
+        fi
+      fi
     fi
-    if [ -n "$DOMAIN" ] && [ -z "$ACME" ]; then
-      printf 'Проверка домена: 1) http — порты 80/443 открыты из интернета  2) cloudflare — через DNS [1]: ' > /dev/tty
-      read -r a < /dev/tty || a=1; [ "$a" = 2 ] && ACME=cloudflare
+    {
+      echo
+      echo " Кому открыть панель по домену:"
+      echo "   1) только из домашней сети и VPN (рекомендуется; остальным 403)"
+      echo "   2) всем в интернете (защищает только пароль)"
+    } > /dev/tty
+    def=1; [ "$S_ALLOW" = any ] && def=2
+    if [ -n "$S_ALLOW" ] && [ "$S_ALLOW" != any ] && [ "$S_ALLOW" != private ]; then
+      echo "   3) оставить свой список: $S_ALLOW" > /dev/tty; def=3
     fi
-    if [ "$ACME" = cloudflare ] && [ -z "$CF_TOKEN" ]; then
-      printf 'API-токен Cloudflare (Zone:DNS:Edit): ' > /dev/tty; read -rs CF_TOKEN < /dev/tty || true; echo > /dev/tty
-    fi
+    while :; do ask "Доступ" "$def"; case "$REPLY" in
+      1) ALLOW=private; break ;; 2) ALLOW=any; break ;; 3) [ "$def" = 3 ] && { ALLOW=$S_ALLOW; break; } ;; esac; done
   fi
+  {
+    echo
+    if [ -n "$DOMAIN" ]; then
+      echo " Итог: https://$DOMAIN · проверка: $ACME · доступ: $([ "$ALLOW" = any ] && echo всем || echo 'LAN/VPN')${EMAIL:+ · $EMAIL}"
+    elif [ "$NO_DOMAIN" = 1 ]; then echo " Итог: домен будет убран, панель по http://IP:8088"
+    else echo " Итог: без домена, панель по http://IP:8088"; fi
+  } > /dev/tty
+  ask "Продолжить установку? (Y/n)" "Y"
+  case "$REPLY" in [nN]*) echo "Отменено" > /dev/tty; exit 1 ;; esac
+  echo > /dev/tty
+elif [ "$NO_DOMAIN" = 0 ] && [ -z "$DOMAIN" ]; then
+  DOMAIN=$S_DOMAIN   # без терминала: сохраняем домен с прошлой установки
 fi
-[ -n "$DOMAIN" ] && [ -z "$EMAIL" ] && EMAIL=$(get_env "$ENV_FILE" NETADMIN_EMAIL)
-[ -n "$DOMAIN" ] && [ -z "$ACME" ] && ACME=$(get_env "$ENV_FILE" NETADMIN_ACME)
-[ -n "$DOMAIN" ] && [ -z "$ALLOW" ] && ALLOW=$(get_env "$ENV_FILE" NETADMIN_ALLOW)
+[ -n "$DOMAIN" ] && [ -z "$EMAIL" ] && EMAIL=$S_EMAIL
+[ -n "$DOMAIN" ] && [ -z "$ACME" ] && ACME=$S_ACME
+[ -n "$DOMAIN" ] && [ -z "$ALLOW" ] && ALLOW=$S_ALLOW
 ACME="${ACME:-http}"; ALLOW="${ALLOW:-private}"
 if [ -n "$DOMAIN" ]; then
   [[ "$DOMAIN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || die "некорректный домен: $DOMAIN"
