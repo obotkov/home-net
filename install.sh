@@ -432,12 +432,12 @@ EOF
 systemctl daemon-reload
 systemctl enable -q netadmin
 systemctl restart netadmin
-# самопроверка: панель должна ответить 401 (просит пароль) на своём порту
+# самопроверка: API панели должен ответить 401 (нужен вход) на своём порту
 PORT=$(get_env "$ENV_FILE" NETADMIN_LISTEN | sed 's/.*://')
 HOST=$(get_env "$ENV_FILE" NETADMIN_LISTEN | sed 's/:[^:]*$//'); { [ -z "$HOST" ] || [ "$HOST" = 0.0.0.0 ]; } && HOST=127.0.0.1
 CODE=000
 for _ in $(seq 1 10); do
-  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://$HOST:$PORT/" 2>/dev/null || true)
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://$HOST:$PORT/api/state" 2>/dev/null || true)
   [ "$CODE" = 401 ] && break
   sleep 1
 done
