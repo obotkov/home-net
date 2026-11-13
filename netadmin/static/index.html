@@ -148,6 +148,14 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
       </form>
       <p class="muted" style="font-size:12px;margin:14px 0 0">После изменения нажмите «Применить дома» на вкладке VPS и переразверните VPS, если меняли MTU или стоимость.</p>
     </div>
+    <div class="card" style="margin-top:14px" id="updcard">
+      <div class="row"><h2 style="margin:0">Обновления</h2><span class="sp"></span>
+        <button class="b" id="updcheck">Проверить</button>
+        <button class="b p" id="updapply" hidden>Обновить</button></div>
+      <p class="muted" style="margin:10px 0 0" id="updcur">Версия: …</p>
+      <div id="updres" style="margin-top:10px"></div>
+      <pre id="updlog" hidden style="margin-top:12px"></pre>
+    </div>
   </section>
 </main>
 
@@ -325,6 +333,39 @@ $('#homefiles').onclick=async()=>{try{filesModal('Конфиги домашне�
 $('#homef').onsubmit=async e=>{e.preventDefault();try{await api('/api/home',{method:'PATCH',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});toast('Сохранено');load()}catch(err){toast(err.message)}};
 
 const mq=matchMedia('(max-width:860px)');const lay=()=>$('#ovgrid').style.gridTemplateColumns=mq.matches?'minmax(0,1fr)':'minmax(0,1.3fr) minmax(0,1fr)';mq.onchange=lay;lay();
+
+// ---------------- обновления
+let UPD=null,updPoll=null,updFrom=null;
+const fmtDate=d=>d?new Date(typeof d==='number'?d*1000:d).toLocaleString('ru-RU'):'—';
+function verLine(v){return v&&v.sha?`<span class="mono">${esc(v.sha.slice(0,7))}</span> · установлена ${fmtDate(v.installed_at)} · ${esc(v.repo)}@${esc(v.ref)}`:'неизвестна (установлено старым скриптом, после первого обновления появится)'}
+async function updCheck(quiet){
+  const b=$('#updcheck');b.disabled=true;b.textContent='Проверяю…';
+  try{UPD=await api('/api/update/check');$('#updcur').innerHTML='Версия: '+verLine(UPD.current);
+    if(!UPD.update_available){$('#updres').innerHTML=`<span class="pill up"><span class="dot"></span>Установлена последняя версия</span> <span class="muted" style="font-size:12px">проверено ${fmtDate(UPD.checked_at)}</span>`;$('#updapply').hidden=true}
+    else{$('#updres').innerHTML=`<span class="pill degraded"><span class="dot"></span>Доступно обновление${UPD.behind?': '+UPD.behind+' изм.':''}</span>
+      <ul style="margin:10px 0 0;padding-left:20px">${UPD.changes.map(c=>`<li><span class="mono muted">${esc(c.short)}</span> ${esc(c.title)} <span class="muted" style="font-size:12px">${fmtDate(c.date)}</span></li>`).join('')}</ul>`;
+      $('#updapply').hidden=false}
+    setUpdBadge(UPD.update_available)}
+  catch(e){if(!quiet)$('#updres').innerHTML=`<span class="pill down"><span class="dot"></span>${esc(e.message)}</span>`}
+  finally{b.disabled=false;b.textContent='Проверить'}
+}
+function setUpdBadge(on){const n=document.querySelector('#nav button[data-t=settings]');n.textContent=on?'Настройки •':'Настройки';n.title=on?'Доступно обновление':''}
+async function updStatus(){
+  try{const st=await api('/api/update/status');$('#updlog').hidden=!st.log;$('#updlog').textContent=st.log;$('#updlog').scrollTop=1e9;
+    const sha=st.version&&st.version.sha;
+    if(st.state==='running'){return}
+    if(st.state==='demo'){clearInterval(updPoll);updPoll=null;$('#updapply').disabled=false;toast('Демо-режим: обновление не выполняется');return}
+    if(updFrom!==null&&(sha!==updFrom||st.state!=='running')){clearInterval(updPoll);updPoll=null;
+      if(st.state==='error'){toast('Обновление завершилось с ошибкой, см. журнал');$('#updapply').disabled=false}
+      else{toast('Обновлено, перезагружаю страницу');setTimeout(()=>location.reload(),1500)}}
+  }catch(e){/* панель перезапускается — ждём */}
+}
+$('#updcheck').onclick=()=>updCheck(false);
+$('#updapply').onclick=async()=>{if(!confirm('Скачать и установить обновление? Панель перезапустится, это займёт до пары минут.'))return;
+  try{updFrom=UPD&&UPD.current.sha||'';await api('/api/update/apply',{method:'POST',body:'{}'});$('#updapply').disabled=true;
+    $('#updres').innerHTML='<span class="pill degraded"><span class="dot"></span>Обновляю… панель перезапустится</span>';
+    updPoll=setInterval(updStatus,2000)}catch(e){toast(e.message)}};
+setTimeout(()=>updCheck(true),1500);
 show(tab);load();setInterval(()=>{if(!dlg.open)load()},5000);
 </script>
 </body>

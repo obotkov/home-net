@@ -197,10 +197,17 @@ python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))' || die "нужен 
 say "скачиваю $REPO@$REF"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-if [ -n "${NETADMIN_GITHUB_TOKEN:-}" ]; then  # приватный репозиторий
-  URL="https://api.github.com/repos/$REPO/tarball/$REF"; AUTH=(-H "Authorization: Bearer $NETADMIN_GITHUB_TOKEN")
+AUTH=()
+[ -n "${NETADMIN_GITHUB_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer $NETADMIN_GITHUB_TOKEN")  # приватный репозиторий
+# Точный коммит, чтобы админка знала свою версию и могла проверять обновления
+SHA=$(curl -fsSL --max-time 15 "${AUTH[@]}" -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/$REPO/commits/$REF" 2>/dev/null \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])' 2>/dev/null || true)
+SRC="${SHA:-$REF}"
+if [ -n "${NETADMIN_GITHUB_TOKEN:-}" ]; then
+  URL="https://api.github.com/repos/$REPO/tarball/$SRC"
 else
-  URL="https://codeload.github.com/$REPO/tar.gz/$REF"; AUTH=()
+  URL="https://codeload.github.com/$REPO/tar.gz/$SRC"
 fi
 curl -fsSL "${AUTH[@]}" "$URL" | tar -xz -C "$TMP" --strip-components=1 \
   || die "не удалось скачать https://github.com/$REPO (репозиторий приватный? см. README)"
@@ -209,6 +216,7 @@ rm -rf "$PREFIX.new"
 mkdir -p "$PREFIX.new"
 cp -r "$TMP/netadmin" "$PREFIX.new/"
 cp "$TMP/install.sh" "$TMP/README.md" "$PREFIX.new/" 2>/dev/null || true
+printf '{"repo": "%s", "ref": "%s", "sha": "%s", "installed_at": %s}\n' "$REPO" "$REF" "${SHA:-unknown}" "$(date +%s)" > "$PREFIX.new/VERSION.json"
 rm -rf "$PREFIX.old"
 [ -d "$PREFIX" ] && mv "$PREFIX" "$PREFIX.old"
 mv "$PREFIX.new" "$PREFIX"

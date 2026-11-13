@@ -22,7 +22,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import collectors, generator
+from . import collectors, generator, updater
 from .store import Store
 
 STATIC = Path(__file__).parent / "static"
@@ -199,6 +199,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, st)
         if path == "/api/vps":
             return self._send(200, [public_vps(s, v) for v in s.vps])
+        if path == "/api/update/check":
+            try:
+                return self._send(200, updater.check())
+            except RuntimeError as e:
+                return self._send(502, {"error": str(e)})
+        if path == "/api/update/status":
+            return self._send(200, updater.status())
         if path == "/api/home/files":
             return self._send(200, generator.all_files(s.home, s.vps))
         m = re.match(r"^/api/vps/(\w+)(/files|/bootstrap\.sh|/deploy)?$", path)
@@ -228,6 +235,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(201, public_vps(s, s.add_vps(body)))
             if method == "PATCH" and path == "/api/home":
                 return self._send(200, s.update_home(body))
+            if method == "POST" and path == "/api/update/apply":
+                try:
+                    return self._send(202, updater.start(demo=collectors.demo_mode()))
+                except RuntimeError as e:
+                    return self._send(409, {"error": str(e)})
             if method == "POST" and path == "/api/home/apply":
                 APP.apply_home()
                 return self._send(202, APP.home_apply)
