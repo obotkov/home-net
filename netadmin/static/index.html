@@ -83,6 +83,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
     <button data-t="devices" id="navdev">Устройства</button>
     <button data-t="vps">VPS</button>
     <button data-t="routes" id="navroutes">Маршруты</button>
+    <button data-t="server">Сервер</button>
     <button data-t="settings">Настройки</button>
   </nav>
   <span class="sp"></span>
@@ -138,6 +139,15 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
       <pre id="applylog" hidden style="margin-top:12px"></pre>
     </div>
     <div class="vps" id="vpslist"></div>
+  </section>
+
+  <section data-p="server" hidden>
+    <div class="card" style="margin-bottom:14px"><div class="row"><h2 style="margin:0">Службы на этом сервере</h2><span class="sp"></span>
+      <span class="muted" id="srvupd" style="font-size:12px"></span></div><div class="tw" id="srvsvc" style="margin-top:10px"></div></div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr))">
+      <div class="card" id="srvxray"></div>
+      <div class="card" id="srvwg"></div>
+    </div>
   </section>
 
   <section data-p="routes" hidden>
@@ -206,6 +216,7 @@ const isK=()=>S&&S.home.mode==='keenetic';
 const depTxt={never:'не развёрнут',running:'разворачивается…',ok:'развёрнут',error:'ошибка'};
 
 function show(t){tab=t;try{localStorage.setItem('na-tab',t)}catch(e){}
+  if(t==='server')loadServer();
   document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
   document.querySelectorAll('section[data-p]').forEach(s=>s.hidden=s.dataset.p!==t);}
 $('#nav').onclick=e=>{if(e.target.dataset.t)show(e.target.dataset.t)};
@@ -450,7 +461,54 @@ $('#pklist').onclick=async e=>{const id=e.target.dataset.pkdel;if(!id||!confirm(
   try{await api('/api/passkeys/'+encodeURIComponent(id),{method:'DELETE'});toast('Удалён');pkLoad()}catch(err){toast(err.message)}};
 $('#logout').onclick=async()=>{try{await api('/auth/logout',{method:'POST',body:'{}'})}catch(e){}location.replace('/login')};
 pkLoad();
-show(tab);load();setInterval(()=>{if(!dlg.open)load()},5000);
+// ---------------- сервер: xray + wg/awg
+const dur=s=>{if(s==null)return '—';const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?`${d} д ${h} ч`:h?`${h} ч ${m} мин`:`${m} мин`};
+const actTxt={active:'работает',inactive:'остановлена',failed:'ошибка',activating:'запускается',deactivating:'останавливается'};
+const actCls={active:'up',failed:'down',inactive:'down',activating:'degraded'};
+let SRV=null,srvOpen={};
+async function loadServer(){try{SRV=await api('/api/server');renderServer()}catch(e){$('#srvsvc').innerHTML=`<div class="empty">${esc(e.message)}</div>`}}
+function keepOpen(id){const d=document.getElementById(id);return d&&d.open?'open':''}
+function renderServer(){const S2=SRV,now=S2.time;
+  $('#srvupd').textContent='обновлено '+new Date(now*1000).toLocaleTimeString('ru-RU');
+  $('#srvsvc').innerHTML=S2.services.length?`<table><tr><th>Служба</th><th>Состояние</th><th>Работает</th><th>PID</th><th>Память</th><th>Перезапуски</th><th></th></tr>`+
+    S2.services.map((u,i)=>`<tr><td class="mono"><b>${esc(u.unit)}</b>${u.loaded?'':' <span class="muted">(не установлена)</span>'}</td>
+      <td><span class="pill ${actCls[u.active]||'unknown'}"><span class="dot"></span>${actTxt[u.active]||esc(u.active)}${u.sub&&u.sub!=='running'?' · '+esc(u.sub):''}</span></td>
+      <td>${u.active==='active'?dur(now-u.since):'—'}</td><td class="mono">${u.pid||'—'}</td><td class="mono">${u.memory?bytes(u.memory):'—'}</td><td class="mono">${u.restarts}</td>
+      <td style="text-align:right;white-space:nowrap"><button class="b" data-log="${i}">Журнал</button> <button class="b" data-restart="${esc(u.unit)}">Перезапустить</button></td></tr>
+      <tr id="log${i}" ${srvOpen[i]?'':'hidden'}><td colspan="7"><pre style="margin:0;max-height:300px">${esc(u.log||'журнал пуст')}</pre></td></tr>`).join('')+'</table>'
+    :'<div class="empty">Службы не найдены</div>';
+  const X=S2.xray;let xh=`<div class="row"><h2 style="margin:0">Xray</h2><span class="sp"></span><span class="muted mono" style="font-size:12px">${esc(X.version||(X.installed?'':'не установлен'))}</span></div>`;
+  if(X.error)xh+=`<p class="muted">${esc(X.error)} (${esc(X.config_path)})</p>`;
+  if(X.summary){xh+=X.summary.inbounds.map(ib=>`<dl class="kv">
+      <dt>Вход</dt><dd>${esc(ib.tag||'—')} · ${esc(ib.protocol)} · ${esc(ib.network)}</dd>
+      <dt>Порт</dt><dd>${esc(ib.listen)}:${ib.port} <span class="pill ${ib.listening?'up':'down'}"><span class="dot"></span>${ib.listening?'слушает':'не слушает'}</span></dd>
+      <dt>Защита</dt><dd>${esc(ib.security)}${ib.flow.length?' · '+esc(ib.flow.join(', ')):''}</dd>
+      ${ib.sni.length?`<dt>SNI</dt><dd>${esc(ib.sni.join(', '))}</dd>`:''}${ib.dest?`<dt>Маскировка под</dt><dd>${esc(ib.dest)}</dd>`:''}
+      <dt>Клиенты</dt><dd>${ib.clients.length}: ${esc(ib.clients.join(', '))}</dd></dl>`).join('');
+    xh+=`<dl class="kv"><dt>Выходы</dt><dd>${esc(X.summary.outbounds.map(o=>o.tag+' ('+o.protocol+')').join(', '))}</dd><dt>Правил маршрутизации</dt><dd>${X.summary.rules}</dd><dt>Уровень логов</dt><dd>${esc(X.summary.loglevel||'—')}</dd></dl>`}
+  if(X.config)xh+=`<details id="xcfg" ${keepOpen('xcfg')}><summary class="muted">Конфиг ${esc(X.config_path)} (секреты скрыты)</summary><pre style="margin-top:8px;max-height:420px">${esc(X.config)}</pre></details>`;
+  $('#srvxray').innerHTML=xh;
+  let wh=`<h2>WireGuard / AmneziaWG</h2>`;
+  if(!S2.tunnels.length)wh+='<div class="empty">Туннелей нет: интерфейсы wg/awg не подняты</div>';
+  wh+=S2.tunnels.map(t=>`<div style="margin-bottom:14px"><div class="row"><b class="mono">${esc(t.iface)}</b><span class="muted">${t.tool==='awg'?'AmneziaWG':'WireGuard'} · ${esc(t.impl)}</span></div>
+    <dl class="kv"><dt>Адрес</dt><dd>${esc(t.address||'—')}${t.mtu?' · MTU '+esc(t.mtu):''}</dd><dt>Порт UDP</dt><dd>${t.listen_port||'—'}</dd>
+    <dt>Публичный ключ</dt><dd>${esc(t.public_key||'—')}</dd>
+    ${Object.keys(t.asc).length?`<dt>Обфускация ASC</dt><dd>${Object.entries(t.asc).map(([k,v])=>esc(k)+'='+esc(v)).join(' ')}</dd>`:''}
+    <dt>Конфиг</dt><dd>${esc(t.conf_path)}</dd></dl>
+    ${t.peers.length?`<div class="tw"><table><tr><th>Пир</th><th>Endpoint</th><th>Handshake</th><th>↓ / ↑</th></tr>`+t.peers.map(p=>`<tr>
+      <td class="mono" title="${esc(p.public_key)}">${esc(p.public_key.slice(0,10))}…<div class="muted" style="font-size:11px">${esc(p.allowed_ips)}</div></td>
+      <td class="mono">${esc(p.endpoint||'—')}</td>
+      <td><span class="pill ${p.handshake_ago!=null&&p.handshake_ago<180?'up':'down'}"><span class="dot"></span>${ago(p.handshake_ago)}</span></td>
+      <td class="mono">${bytes(p.rx)} / ${bytes(p.tx)}</td></tr>`).join('')+'</table></div>':'<div class="muted">Пиров нет</div>'}</div>`).join('');
+  $('#srvwg').innerHTML=wh;
+}
+$('#srvsvc').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.log!=null){const i=b.dataset.log;srvOpen[i]=!srvOpen[i];$('#log'+i).hidden=!srvOpen[i];return}
+  if(b.dataset.restart){if(!confirm('Перезапустить '+b.dataset.restart+'? Соединения через неё на пару секунд прервутся.'))return;
+    b.disabled=true;try{await api('/api/server/restart',{method:'POST',body:JSON.stringify({unit:b.dataset.restart})});toast('Перезапущено');await loadServer()}
+    catch(err){modal('Ошибка перезапуска',`<pre>${esc(err.message)}</pre>`)}finally{b.disabled=false}}};
+
+show(tab);load();setInterval(()=>{if(!dlg.open){load();if(tab==='server')loadServer()}},5000);
 
 // ---------------- тема
 (function(){const order=['auto','light','dark'],name={auto:'◐ Авто',light:'☀ Светлая',dark:'☾ Тёмная'};

@@ -24,7 +24,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import collectors, generator, updater, webauthn
+from . import collectors, generator, server, updater, webauthn
 from .store import Store
 
 STATIC = Path(__file__).parent / "static"
@@ -347,6 +347,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, updater.check())
             except RuntimeError as e:
                 return self._send(502, {"error": str(e)})
+        if path == "/api/server":
+            return self._send(200, server.status(s))
         if path == "/api/update/status":
             return self._send(200, updater.status())
         if path == "/api/home/files":
@@ -457,6 +459,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, {"error": "нет такого passkey"})
                 s.save()
                 return self._send(200, {"ok": True})
+            if method == "POST" and path == "/api/server/restart":
+                return self._send(200, server.restart(str(body.get("unit", ""))))
             if method == "POST" and path == "/api/vps/self":
                 return self._send(201, public_vps(s, APP.add_self()))
             if method == "POST" and path == "/api/vps":
