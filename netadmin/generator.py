@@ -340,21 +340,58 @@ echo "== пакеты"
 apt-get update -qq
 apt-get install -y -qq curl gnupg nftables "linux-headers-$(uname -r)" >/dev/null || \
   apt-get install -y -qq curl gnupg nftables >/dev/null
-command -v xray >/dev/null || {XRAY_INSTALL}
+command -v xray >/dev/null || {{ echo "-- установка Xray"; {XRAY_INSTALL} >/dev/null; }}
 
 echo "== AmneziaWG"
-if ! command -v awg-quick >/dev/null; then
-  . /etc/os-release
+. /etc/os-release
+if [ ! -f /etc/apt/sources.list.d/amnezia.list ]; then
   CODENAME=focal; [ "$ID" = ubuntu ] && CODENAME="$VERSION_CODENAME"
-  FPR=$(curl -fsSL https://api.launchpad.net/1.0/~amnezia/+archive/ubuntu/ppa \
+  FPR=$(curl -fsSL https://api.launchpad.net/1.0/~amnezia/+archive/ubuntu/ppa \\
         | python3 -c 'import json,sys; print(json.load(sys.stdin)["signing_key_fingerprint"])')
   curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$FPR" | gpg --dearmor --yes -o /usr/share/keyrings/amnezia.gpg
-  echo "deb [signed-by=/usr/share/keyrings/amnezia.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu $CODENAME main" \
+  echo "deb [signed-by=/usr/share/keyrings/amnezia.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu $CODENAME main" \\
     > /etc/apt/sources.list.d/amnezia.list
   apt-get update -qq
-  apt-get install -y -qq amneziawg >/dev/null
 fi
-modprobe amneziawg 2>/dev/null || {{ echo "Модуль amneziawg не загрузился (нет заголовков ядра?)"; exit 1; }}
+# если прошлый запуск оставил недособранный модуль, убираем его, чтобы apt не падал
+ST=$(dpkg-query -W -f='${{Status}}' amneziawg-dkms 2>/dev/null || true)
+if [ -n "$ST" ] && [ "$ST" != "install ok installed" ] && [ "$ST" != "unknown ok not-installed" ]; then
+  apt-get purge -y -qq amneziawg amneziawg-dkms >/dev/null 2>&1 || true
+fi
+dpkg --configure -a >/dev/null 2>&1 || true
+apt-get install -y -qq amneziawg-tools >/dev/null
+if ! modprobe amneziawg 2>/dev/null; then
+  echo "-- пробую модуль ядра (DKMS)"
+  if apt-get install -y -qq amneziawg-dkms >/dev/null 2>/tmp/awg-dkms.err && modprobe amneziawg 2>/dev/null; then
+    echo "   модуль ядра собран"
+  else
+    echo "   модуль ядра для $(uname -r) не собрался, ставлю amneziawg-go (без модуля ядра)"
+    tail -n 5 /tmp/awg-dkms.err 2>/dev/null || true
+    apt-get purge -y -qq amneziawg amneziawg-dkms >/dev/null 2>&1 || true
+    dpkg --configure -a >/dev/null 2>&1 || true
+  fi
+fi
+if ! lsmod | grep -q '^amneziawg' && ! command -v amneziawg-go >/dev/null; then
+  [ -c /dev/net/tun ] || {{ echo "Нет /dev/net/tun: включите TUN/TAP в панели хостера (OpenVZ/LXC) и повторите"; exit 1; }}
+  echo "-- сборка amneziawg-go"
+  apt-get install -y -qq git make >/dev/null
+  GOARCH=$(dpkg --print-architecture)
+  GOVER=$(curl -fsSL 'https://go.dev/dl/?mode=json' | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["version"])')
+  rm -rf /opt/netadmin-go && mkdir -p /opt/netadmin-go
+  curl -fsSL "https://go.dev/dl/$GOVER.linux-$GOARCH.tar.gz" | tar -C /opt/netadmin-go -xz
+  rm -rf /tmp/amneziawg-go
+  git clone -q --depth 1 https://github.com/amnezia-vpn/amneziawg-go /tmp/amneziawg-go
+  (cd /tmp/amneziawg-go && PATH="/opt/netadmin-go/go/bin:$PATH" GOTOOLCHAIN=auto make >/dev/null)
+  install -m 755 /tmp/amneziawg-go/amneziawg-go /usr/local/bin/amneziawg-go
+  rm -rf /tmp/amneziawg-go /opt/netadmin-go
+  echo "   amneziawg-go установлен"
+fi
+if ! lsmod | grep -q '^amneziawg'; then
+  install -d /etc/systemd/system/awg-quick@.service.d
+  printf '[Service]\\nEnvironment=WG_QUICK_USERSPACE_IMPLEMENTATION=amneziawg-go\\n' \\
+    > /etc/systemd/system/awg-quick@.service.d/userspace.conf
+  systemctl daemon-reload
+fi
 
 echo "== конфиги"
 {_heredoc('/etc/amnezia/amneziawg/awg-home.conf', awg_vps_conf(home, v))}

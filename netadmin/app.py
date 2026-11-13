@@ -122,8 +122,9 @@ class App:
                 for cmd, stdin_text, extra_env in steps:
                     try:
                         env = {**os.environ, **(extra_env or {})}
-                        p = subprocess.run(cmd, input=stdin_text, capture_output=True, text=True, timeout=900, env=env)
-                        target["log"] = (target["log"] + scrub(p.stdout + p.stderr))[-20000:]
+                        p = subprocess.run(cmd, input=stdin_text, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                           text=True, timeout=1800, env=env)
+                        target["log"] = (target["log"] + scrub(p.stdout))[-20000:]
                         if p.returncode != 0:
                             ok = False
                             break
