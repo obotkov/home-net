@@ -14,7 +14,7 @@
 #   --allow     NETADMIN_ALLOW      кому открыта панель по домену: "private" (LAN/VPN, по умолчанию) | "any" | список CIDR
 #   --no-domain                     убрать домен и вернуться к http://IP:8088
 #               NETADMIN_REF=main            ветка или тег
-#               NETADMIN_LISTEN=IP:PORT      адрес панели без домена (по умолчанию LAN-адрес узла:8088)
+#               NETADMIN_LISTEN=IP:PORT      адрес панели без домена (по умолчанию 0.0.0.0:8088)
 #               NETADMIN_APPLY=1             кнопка «Применить дома» сразу применяет конфиг (по умолчанию 1)
 #               NETADMIN_SKIP_DEPS=1         не ставить пакеты
 #               NETADMIN_GITHUB_TOKEN=...    токен для приватного репозитория
@@ -246,8 +246,8 @@ rm -rf "$PREFIX.old"
 # ---------------------------------------------------------------- настройки (только при первой установке)
 install -d -m 700 "$STATE_DIR"
 FIRST=0
-LAN_IF=$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="dev"){print $(i+1); exit}}')
-LAN_IP=$(ip -4 -o addr show dev "${LAN_IF:-lo}" 2>/dev/null | awk '{print $4; exit}')
+LAN_IF=$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="dev"){print $(i+1); exit}}' || true)
+LAN_IP=$(ip -4 -o addr show dev "${LAN_IF:-lo}" 2>/dev/null | awk '{print $4; exit}' || true)
 if [ ! -f "$ENV_FILE" ]; then
   FIRST=1
   LAN_CIDR=$(python3 -c "import ipaddress,sys; print(ipaddress.ip_interface(sys.argv[1]).network)" "${LAN_IP:-192.168.1.1/24}")
@@ -256,7 +256,7 @@ if [ ! -f "$ENV_FILE" ]; then
   cat > "$ENV_FILE" <<EOF
 # netadmin — меняйте и делайте: systemctl restart netadmin
 NETADMIN_PASSWORD=$PASS
-NETADMIN_LISTEN=${NETADMIN_LISTEN:-${LAN_IP%/*}:8088}
+NETADMIN_LISTEN=${NETADMIN_LISTEN:-0.0.0.0:8088}
 NETADMIN_APPLY=${NETADMIN_APPLY:-1}
 NETADMIN_STATE=$STATE_DIR/state.json
 NETADMIN_OUT=$STATE_DIR/out
@@ -405,7 +405,7 @@ remove_domain() {
   fi
   set_env "$ENV_FILE" NETADMIN_DOMAIN ""
   if [ "$(get_env "$ENV_FILE" NETADMIN_LISTEN)" = "$INTERNAL" ]; then
-    set_env "$ENV_FILE" NETADMIN_LISTEN "${NETADMIN_LISTEN:-${LAN_IP%/*}:8088}"
+    set_env "$ENV_FILE" NETADMIN_LISTEN "${NETADMIN_LISTEN:-0.0.0.0:8088}"
   fi
 }
 
@@ -414,6 +414,24 @@ if [ -n "$DOMAIN" ]; then
 elif [ "$NO_DOMAIN" = 1 ]; then
   remove_domain
 fi
+
+# Старые установки слушали конкретный LAN-IP: после смены адреса по DHCP панель переставала открываться
+CUR_LISTEN=$(get_env "$ENV_FILE" NETADMIN_LISTEN)
+if [ -z "$DOMAIN" ] && [ -z "${NETADMIN_LISTEN:-}" ] && [ "${CUR_LISTEN%:*}" != 0.0.0.0 ] && [ "${CUR_LISTEN%:*}" != 127.0.0.1 ]; then
+  set_env "$ENV_FILE" NETADMIN_LISTEN "0.0.0.0:${CUR_LISTEN##*:}"
+fi
+
+# Фаервол: если включён ufw или firewalld, открываем нужные порты
+open_ports() {
+  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
+    for p in "$@"; do ufw allow "$p/tcp" >/dev/null && say "ufw: открыт порт $p/tcp"; done
+  elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
+    for p in "$@"; do firewall-cmd -q --permanent --add-port="$p/tcp"; done
+    firewall-cmd -q --reload && say "firewalld: открыты порты $*"
+  fi
+  return 0
+}
+if [ -n "$DOMAIN" ]; then open_ports 80 443; else open_ports "$(get_env "$ENV_FILE" NETADMIN_LISTEN | sed 's/.*://')"; fi
 
 # ---------------------------------------------------------------- systemd
 cat > "$UNIT" <<EOF
@@ -435,8 +453,21 @@ EOF
 systemctl daemon-reload
 systemctl enable -q netadmin
 systemctl restart netadmin
-sleep 1
-systemctl is-active -q netadmin || { journalctl -u netadmin -n 30 --no-pager; die "сервис не запустился"; }
+# самопроверка: панель должна ответить 401 (просит пароль) на своём порту
+PORT=$(get_env "$ENV_FILE" NETADMIN_LISTEN | sed 's/.*://')
+HOST=$(get_env "$ENV_FILE" NETADMIN_LISTEN | sed 's/:[^:]*$//'); { [ -z "$HOST" ] || [ "$HOST" = 0.0.0.0 ]; } && HOST=127.0.0.1
+CODE=000
+for _ in $(seq 1 10); do
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://$HOST:$PORT/" 2>/dev/null || true)
+  [ "$CODE" = 401 ] && break
+  sleep 1
+done
+if [ "$CODE" != 401 ]; then
+  systemctl status netadmin --no-pager -l 2>/dev/null | head -n 15 || true
+  journalctl -u netadmin -n 30 --no-pager 2>/dev/null || true
+  die "панель не отвечает на http://$HOST:$PORT (код $CODE). Пришлите вывод выше"
+fi
+say "самопроверка: панель отвечает на порту $PORT"
 
 # ---------------------------------------------------------------- итог
 # shellcheck disable=SC1090
@@ -458,11 +489,18 @@ if [ -n "${NETADMIN_DOMAIN:-}" ]; then
   else
     warn "сертификат пока не получен. Смотрите: journalctl -u caddy -n 50"
     warn "частые причины: нет A-записи, порты 80/443 не проброшены на этот узел (для --acme http), неверный токен Cloudflare"
-    say "панель доступна локально: http://$NETADMIN_LISTEN"
+    say "панель доступна локально: http://127.0.0.1:8088 (например, через ssh -L 8088:127.0.0.1:8088)"
   fi
   [ "${NETADMIN_ALLOW:-private}" = private ] && say "по домену панель открыта только из LAN/VPN (--allow any, чтобы открыть всем)"
 else
-  say "netadmin работает: http://$NETADMIN_LISTEN   логин: admin"
+  if [ "${NETADMIN_LISTEN%:*}" = 0.0.0.0 ]; then
+    for ip in $(hostname -I 2>/dev/null || echo "${LAN_IP%/*}"); do
+      case "$ip" in *:*|127.*) continue ;; esac
+      say "netadmin работает: http://$ip:${NETADMIN_LISTEN##*:}   логин: admin"
+    done
+  else
+    say "netadmin работает: http://$NETADMIN_LISTEN   логин: admin"
+  fi
 fi
 if [ "$FIRST" = 1 ]; then
   say "пароль: $NETADMIN_PASSWORD   (хранится в $ENV_FILE)"
