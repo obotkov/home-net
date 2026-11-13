@@ -22,7 +22,7 @@ nav button.on{background:var(--soft);color:var(--ink);font-weight:600}
 .sp{flex:1}
 .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:2px 9px;border-radius:99px;background:var(--soft);color:var(--muted);white-space:nowrap}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
-.up .dot,.dot.up{background:var(--ok)} .degraded .dot,.dot.degraded{background:var(--warn)} .down .dot,.dot.down{background:var(--bad)}
+.up .dot,.dot.up{background:var(--ok)} .degraded .dot,.dot.degraded{background:var(--warn)} .down .dot,.dot.down{background:var(--bad)} .unknown .dot,.dot.unknown{background:var(--muted)}
 main{max-width:1180px;margin:0 auto;padding:24px 16px 60px}
 .banner{background:color-mix(in srgb,var(--warn) 14%,transparent);border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);padding:10px 14px;border-radius:10px;margin-bottom:18px;font-size:13px}
 .grid{display:grid;gap:14px}
@@ -47,7 +47,7 @@ button.d{color:var(--bad)}
 button:disabled{opacity:.5;cursor:default}
 form.f{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
 label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
-input{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+input,select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
 input:focus{outline:2px solid color-mix(in srgb,var(--accent) 50%,transparent);border-color:var(--accent)}
 .vps{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px;margin:10px 0 14px}
@@ -75,9 +75,9 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
   <h1>Домашняя сеть</h1>
   <nav id="nav">
     <button data-t="overview" class="on">Обзор</button>
-    <button data-t="devices">Устройства</button>
+    <button data-t="devices" id="navdev">Устройства</button>
     <button data-t="vps">VPS</button>
-    <button data-t="routes">Маршруты</button>
+    <button data-t="routes" id="navroutes">Маршруты</button>
     <button data-t="settings">Настройки</button>
   </nav>
   <span class="sp"></span>
@@ -116,11 +116,11 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
         <label>SSH пароль (если нет ключа)<input name="password" type="password" autocomplete="new-password" placeholder="не сохраняется"></label>
         <label>Порт Xray<input name="xray_port" type="number" value="443"></label>
         <label>SNI для REALITY<input name="sni" value="www.microsoft.com"></label>
-        <label>Стоимость OSPF<input name="cost" type="number" value="10"></label>
+        <label class="nk">Стоимость OSPF<input name="cost" type="number" value="10"></label>
         <div style="display:flex;align-items:flex-end"><button class="b p" type="submit">Добавить</button></div>
       </form>
     </div>
-    <div class="card" style="margin-bottom:14px">
+    <div class="card" style="margin-bottom:14px" id="homecard">
       <div class="row"><div><b>Домашний узел</b> <span class="muted" id="applyinfo"></span></div><span class="sp"></span>
         <button class="b" id="homefiles">Конфиги дома</button>
         <button class="b p" id="applyhome">Применить дома</button></div>
@@ -140,14 +140,17 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
     <div class="card">
       <h2>Параметры домашнего узла</h2>
       <form class="f" id="homef">
+        <label>Вход в домашнюю сеть<select name="mode">
+          <option value="linux">Linux-узел дома (Xray + WireGuard + OSPF)</option>
+          <option value="keenetic">Роутер Keenetic (AmneziaWG до VPS)</option></select></label>
         <label>Имя<input name="name"></label>
-        <label>LAN-интерфейс<input name="lan_if"></label>
+        <label class="nk">LAN-интерфейс<input name="lan_if"></label>
         <label>LAN-подсеть<input name="lan_cidr"></label>
         <label>MTU WireGuard<input name="wg_mtu" type="number"></label>
-        <label>Стоимость OSPF по умолчанию<input name="ospf_cost" type="number"></label>
+        <label class="nk">Стоимость OSPF по умолчанию<input name="ospf_cost" type="number"></label>
         <div style="display:flex;align-items:flex-end"><button class="b p">Сохранить</button></div>
       </form>
-      <p class="muted" style="font-size:12px;margin:14px 0 0">После изменения нажмите «Применить дома» на вкладке VPS и переразверните VPS, если меняли MTU или стоимость.</p>
+      <p class="muted" style="font-size:12px;margin:14px 0 0" id="homenote"></p>
     </div>
     <div class="card" style="margin-top:14px" id="pkcard">
       <div class="row"><h2 style="margin:0">Passkey</h2><span class="sp"></span>
@@ -187,7 +190,8 @@ async function api(path,opt={}){
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('on');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('on'),2200)}
 const bytes=n=>{if(!n)return '0';const u=['Б','КБ','МБ','ГБ','ТБ'];let i=0;while(n>=1024&&i<4){n/=1024;i++}return n.toFixed(i?1:0)+' '+u[i]};
 const ago=s=>s==null?'—':s<60?s+' с назад':s<3600?Math.round(s/60)+' мин назад':Math.round(s/3600)+' ч назад';
-const stTxt={up:'работает',degraded:'частично',down:'нет связи'};
+const stTxt={up:'работает',degraded:'частично',down:'нет связи',unknown:'не видно отсюда'};
+const isK=()=>S&&S.home.mode==='keenetic';
 const depTxt={never:'не развёрнут',running:'разворачивается…',ok:'развёрнут',error:'ошибка'};
 
 function show(t){tab=t;try{localStorage.setItem('na-tab',t)}catch(e){}
@@ -205,10 +209,18 @@ function render(){
   $('#demo').hidden=!S.demo;
   const up=S.links.filter(l=>l.status==='up').length, on=S.devices.filter(d=>d.online).length;
   const svc=n=>`<span class="pill ${S.services[n]==='active'?'up':'down'}"><span class="dot"></span>${esc(S.services[n])}</span>`;
-  $('#stats').innerHTML=[
+  const K=isK();
+  $('#stats').innerHTML=(K?[
+    ['Режим','Keenetic'],['Линки к роутеру',`${up} / ${S.links.length}`],['AmneziaWG',svc('awg-quick@awg-home')],['Xray',svc('xray')]
+  ]:[
     ['Линки к VPS',`${up} / ${S.links.length}`],['Устройства онлайн',`${on} / ${S.devices.length}`],
     ['OSPF-соседи',S.ospf_neighbors.length],['Xray',svc('xray')],['BIRD',svc('bird')]
-  ].map(([k,v])=>`<div class="card stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  ]).map(([k,v])=>`<div class="card stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  $('#navdev').hidden=K;$('#navroutes').hidden=K;$('#homecard').hidden=K;
+  document.querySelectorAll('.nk').forEach(e=>e.hidden=K);
+  if(K&&(tab==='devices'||tab==='routes'))show('overview');
+  $('#homenote').textContent=K?'Режим Keenetic: панель стоит на VPS, дома ничего ставить не нужно. После смены режима переразверните каждый VPS и импортируйте его конфиг в Keenetic (карточка VPS → «Keenetic»).'
+    :'После изменения нажмите «Применить дома» на вкладке VPS и переразверните VPS, если меняли MTU или стоимость.';
   renderTopo();renderLinks();renderDevices();renderVps();renderRoutes();
   const f=$('#homef');if(document.activeElement?.form!==f)for(const k in S.home)if(f[k])f[k].value=S.home[k];
   const a=S.home_apply;$('#applyinfo').textContent=`· ${S.home.lan_cidr} через ${S.home.lan_if} · router id ${S.home.router_id}`+(a.at?` · применено ${new Date(a.at*1000).toLocaleString('ru-RU')}`:'');
@@ -217,14 +229,14 @@ function render(){
 
 function renderTopo(){
   const L=S.links,W=560,Hh=Math.max(300,L.length?320:220),cx=150,cy=Hh/2;
-  const col={up:'var(--ok)',degraded:'var(--warn)',down:'var(--bad)'};
+  const col={up:'var(--ok)',degraded:'var(--warn)',down:'var(--bad)',unknown:'var(--muted)'};
   let s=`<svg class="topo" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Топология сети">`;
   const pos=L.map((l,i)=>{const a=L.length===1?0:(-Math.PI/2.6)+(i*(Math.PI/1.3)/(L.length-1));return[cx+260*Math.cos(a)+40,cy+(Hh/2-40)*Math.sin(a)]});
   L.forEach((l,i)=>{const[x,y]=pos[i];s+=`<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="${col[l.status]}" stroke-width="2.5" ${l.status==='down'?'stroke-dasharray="6 5"':''}/>`});
   s+=`<circle cx="${cx-80}" cy="${cy}" r="26" fill="var(--soft)" stroke="var(--line)"/><text x="${cx-80}" y="${cy+4}" text-anchor="middle">LAN</text>
-      <text class="sub" x="${cx-80}" y="${cy+44}" text-anchor="middle">${S.devices.filter(d=>d.online).length} онлайн</text>
+      <text class="sub" x="${cx-80}" y="${cy+44}" text-anchor="middle">${isK()?'дом':S.devices.filter(d=>d.online).length+' онлайн'}</text>
       <line x1="${cx-54}" y1="${cy}" x2="${cx-34}" y2="${cy}" stroke="var(--line)" stroke-width="2"/>
-      <circle cx="${cx}" cy="${cy}" r="34" fill="var(--accent)"/><text x="${cx}" y="${cy+4}" text-anchor="middle" style="fill:var(--accent-ink);font-weight:600">${esc(S.home.name)}</text>
+      <circle cx="${cx}" cy="${cy}" r="34" fill="var(--accent)"/><text x="${cx}" y="${cy+4}" text-anchor="middle" style="fill:var(--accent-ink);font-weight:600">${isK()?'Keenetic':esc(S.home.name)}</text>
       <text class="sub" x="${cx}" y="${cy+52}" text-anchor="middle">${esc(S.home.lan_cidr)}</text>`;
   L.forEach((l,i)=>{const[x,y]=pos[i];s+=`<circle cx="${x}" cy="${y}" r="22" fill="var(--panel)" stroke="${col[l.status]}" stroke-width="2.5"/>
     <text x="${x}" y="${y+4}" text-anchor="middle" style="font-weight:600">${esc(l.name)}</text>
@@ -235,10 +247,10 @@ function renderTopo(){
 
 function renderLinks(){
   if(!S.links.length){$('#links').innerHTML='<div class="empty">Пока нет VPS</div>';return}
-  $('#links').innerHTML=`<table><tr><th>VPS</th><th>Статус</th><th>Handshake</th><th>OSPF</th><th>Трафик ↓/↑</th></tr>`+
+  $('#links').innerHTML=`<table><tr><th>VPS</th><th>Статус</th><th>Handshake</th><th>${isK()?'Туннель':'OSPF'}</th><th>Трафик ↓/↑</th></tr>`+
     S.links.map(l=>`<tr><td><b>${esc(l.name)}</b><div class="muted mono">${esc(l.iface)}</div></td>
     <td><span class="pill ${l.status}"><span class="dot"></span>${stTxt[l.status]}</span></td>
-    <td>${ago(l.handshake_ago)}</td><td class="mono">${esc(l.ospf_state||'—')}</td>
+    <td>${ago(l.handshake_ago)}</td><td class="mono">${esc(isK()?l.tunnel:(l.ospf_state||'—'))}</td>
     <td class="mono">${bytes(l.rx)} / ${bytes(l.tx)}</td></tr>`).join('')+'</table>';
 }
 
@@ -255,15 +267,18 @@ $('#devq').oninput=renderDevices;
 function renderVps(){
   if(!V.length){$('#vpslist').innerHTML='<div class="card empty" style="grid-column:1/-1">Добавьте первый VPS через форму выше</div>';return}
   $('#vpslist').innerHTML=V.map(v=>{const l=S.links.find(x=>x.id===v.id)||{};const d=v.deploy||{};
+    const K=isK();
     return `<div class="card"><div class="row"><b style="font-size:15px">${esc(v.label)}</b><span class="muted mono">${esc(v.name)}</span><span class="sp"></span>
       <span class="pill ${l.status||'down'}"><span class="dot"></span>${stTxt[l.status]||'—'}</span></div>
       <dl class="kv"><dt>Публичный IP</dt><dd>${esc(v.public_ip)}:${v.xray_port}</dd>
       <dt>Туннель</dt><dd>${esc(v.home_tun_ip)} ↔ ${esc(v.vps_tun_ip)} /31</dd>
-      <dt>Интерфейс</dt><dd>${esc(v.iface)} → 127.0.0.1:${v.local_port}</dd>
-      <dt>Router ID</dt><dd>${esc(v.vps_router_id)} · cost ${v.cost}</dd>
+      ${K?`<dt>AmneziaWG</dt><dd>awg-home · UDP ${v.awg.port}</dd>`
+        :`<dt>Интерфейс</dt><dd>${esc(v.iface)} → 127.0.0.1:${v.local_port}</dd>
+      <dt>Router ID</dt><dd>${esc(v.vps_router_id)} · cost ${v.cost}</dd>`}
       <dt>Handshake</dt><dd>${ago(l.handshake_ago)}</dd>
       <dt>Развёртывание</dt><dd>${depTxt[d.status]||esc(d.status)}${d.at?' · '+new Date(d.at*1000).toLocaleString('ru-RU'):''}</dd></dl>
       <div class="row"><button class="b p" data-a="deploy" data-id="${v.id}" ${d.status==='running'?'disabled':''}>Развернуть по SSH</button>
+      ${K?`<button class="b p" data-a="keen" data-id="${v.id}">Keenetic</button>`:''}
       <button class="b" data-a="files" data-id="${v.id}">Конфиги</button>
       <button class="b" data-a="client" data-id="${v.id}">Доступ с телефона</button>
       <button class="b d" data-a="del" data-id="${v.id}">Удалить</button></div>
@@ -292,9 +307,26 @@ function filesModal(title,files){
   draw();
 }
 
+function keeneticModal(v){
+  modal('Подключить Keenetic к '+v.label,`<ol class="steps">
+    <li>Сначала разверните VPS (кнопка «Развернуть по SSH»), дождитесь «развёрнут».</li>
+    <li>Скачайте файл ниже. В веб-интерфейсе Keenetic: <b>Интернет → Другие подключения → WireGuard → «Загрузить из файла»</b> и выберите его.</li>
+    <li>В созданном подключении <b>снимите галочку «Использовать для выхода в интернет»</b> и включите подключение.</li>
+    <li>Откройте командную строку роутера <span class="mono">http://my.keenetic.net/a</span> и выполните команды ниже по одной.
+      Если подключение получило другое имя (Wireguard1 и т.д.), замените его: имя видно в <span class="mono">show interface</span>.
+      Команды разрешают доступ из туннеля в домашнюю сеть и задают обфускацию ASC (если импорт её не подхватил).</li>
+    <li>Через минуту статус на карточке VPS станет «работает» (виден, если панель стоит на этом VPS).</li></ol>
+    <div class="row" style="margin:6px 0 8px"><button class="b p" id="dlk">Скачать keenetic-${esc(v.name)}.conf</button><span class="sp"></span>
+      <button class="b" id="cpk">Копировать команды</button></div>
+    <pre>${esc(v.keenetic_cli)}</pre>
+    <p class="muted" style="font-size:12px;margin-bottom:0">Файл содержит приватный ключ роутера, не публикуйте его.</p>`);
+  $('#dlk').onclick=()=>{location.href=`/api/vps/${v.id}/keenetic.conf`};
+  $('#cpk').onclick=()=>navigator.clipboard.writeText(v.keenetic_cli).then(()=>toast('Скопировано'));
+}
+
 function deployModal(v){
-  modal('Развернуть '+v.label,`<p>Админка подключится к <span class="mono">${esc(v.ssh_user)}@${esc(v.public_ip)}:${v.ssh_port}</span> и установит WireGuard, Xray и BIRD.
-    Конфиги BIRD и Xray на VPS будут перезаписаны, используйте чистый VPS.</p>
+  modal('Развернуть '+v.label,`<p>Админка подключится к <span class="mono">${esc(v.ssh_user)}@${esc(v.public_ip)}:${v.ssh_port}</span> и установит ${isK()?'AmneziaWG и Xray':'WireGuard, Xray и BIRD'}.
+    Конфиги ${isK()?'AmneziaWG':'BIRD'} и Xray на VPS будут перезаписаны, используйте чистый VPS.</p>
     <form id="depf" class="f" style="grid-template-columns:1fr auto;align-items:end" autocomplete="off">
       <label>SSH пароль <span class="muted">(оставьте пустым, если ключ узла уже добавлен на VPS)</span>
         <input name="password" type="password" autocomplete="new-password" placeholder="не сохраняется"></label>
@@ -316,7 +348,8 @@ $('#vpslist').onclick=async e=>{const b=e.target.closest('button[data-a]');if(!b
       <pre style="white-space:pre-wrap;word-break:break-all">${esc(v.client_link)}</pre>
       <div class="row" style="margin-top:10px"><button class="b p" id="cpl">Копировать ссылку</button></div>`),$('#cpl')&&($('#cpl').onclick=()=>navigator.clipboard.writeText(v.client_link).then(()=>toast('Скопировано')));
     if(b.dataset.a==='deploy')deployModal(v);
-    if(b.dataset.a==='del'){if(!confirm(`Удалить ${v.name}? Ключи этого линка будут потеряны. После удаления нажмите «Применить дома».`))return;
+    if(b.dataset.a==='keen')keeneticModal(v);
+    if(b.dataset.a==='del'){if(!confirm(`Удалить ${v.name}? Ключи этого линка будут потеряны. `+(isK()?'Подключение WireGuard в Keenetic удалите руками.':'После удаления нажмите «Применить дома».')))return;
       await api(`/api/vps/${v.id}`,{method:'DELETE'});toast('Удалён');load()}
   }catch(err){toast(err.message)}
 };
@@ -327,8 +360,10 @@ $('#addf').onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new 
     if(pw){try{await api(`/api/vps/${v.id}/deploy`,{method:'POST',body:JSON.stringify({password:pw})});
       await load();modal('VPS «'+v.label+'» добавлен',`<p>Развёртывание по паролю запущено, ход виден в «Логе развёртывания» на карточке.
         Пароль использован только для установки SSH-ключа узла и не сохранён.</p>
-        <p>Когда развёртывание закончится, нажмите <b>«Применить дома»</b>, и через минуту линк станет зелёным.</p>`);return}
+        <p>${isK()?'Когда развёртывание закончится, нажмите на карточке <b>«Keenetic»</b> и импортируйте конфиг в роутер.':'Когда развёртывание закончится, нажмите <b>«Применить дома»</b>, и через минуту линк станет зелёным.'}</p>`);return}
       catch(err){toast('VPS добавлен, но развернуть не удалось: '+err.message)}}
+    if(isK()){await load();modal('VPS «'+v.label+'» добавлен',`<ol class="steps"><li><b>Развернуть VPS.</b> Кнопка «Развернуть по SSH» на карточке: поставит AmneziaWG (UDP ${v.awg.port}) и Xray.</li>
+      <li><b>Подключить Keenetic.</b> Кнопка «Keenetic» на карточке: файл для импорта и пара команд.</li></ol>`);return}
     await load();modal('VPS «'+v.label+'» добавлен',`<p>Адреса и ключи сгенерированы: туннель <span class="mono">${esc(v.home_tun_ip)} ↔ ${esc(v.vps_tun_ip)}</span>, локальный порт Xray <span class="mono">${v.local_port}</span>.</p>
       <ol class="steps"><li><b>Развернуть VPS.</b> Кнопка «Развернуть по SSH» на карточке (нужен SSH-ключ этого узла на VPS) или вручную: <pre style="margin-top:6px">ssh ${esc(v.ssh_user)}@${esc(v.public_ip)} 'sudo bash -s' &lt; bootstrap-${esc(v.name)}.sh</pre></li>
       <li><b>Применить дома.</b> Кнопка «Применить дома» поднимет интерфейс <span class="mono">${esc(v.iface)}</span>, добавит VPS в Xray и BIRD.</li>

@@ -3,6 +3,7 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import threading
 import time
 
@@ -19,6 +20,10 @@ DEFAULT_HOME = {
     "xray_local_base": 20000,  # локальные UDP-порты dokodemo-door: 20001, 20002 ...
     "wg_mtu": 1280,
     "ospf_cost": 10,
+    # linux    — дома Linux-узел с панелью: Xray-линки + WireGuard + BIRD/OSPF
+    # keenetic — панель на VPS, дома роутер Keenetic: AmneziaWG (WireGuard с обфускацией ASC) до каждого VPS
+    "mode": "linux",
+    "keenetic_lan_if": "Bridge0",
 }
 
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,11}$")
@@ -40,6 +45,11 @@ class Store:
             self.data["vps"] = loaded.get("vps", [])
             self.data["passkeys"] = loaded.get("passkeys", [])
         self._ensure_home_keys()
+        changed = False
+        for v in self.data["vps"]:
+            changed |= ensure_awg(v)
+        if changed and os.path.exists(path):
+            self.save()
 
     # -------- persistence
     def save(self):
@@ -130,6 +140,7 @@ class Store:
                 "deploy": {"status": "never", "log": "", "at": None},
                 **self.plan_for(idx),
             }
+            ensure_awg(v)
             self.vps.append(v)
             self.save()
         return v
@@ -156,10 +167,30 @@ class Store:
             self.save()
 
     def update_home(self, form):
-        allowed = {"name", "lan_if", "lan_cidr", "wg_mtu", "ospf_cost"}
+        allowed = {"name", "lan_if", "lan_cidr", "wg_mtu", "ospf_cost", "mode"}
+        if "mode" in form and form["mode"] not in ("linux", "keenetic"):
+            raise ValueError("режим: linux или keenetic")
         for k, val in form.items():
             if k in allowed:
                 self.home[k] = int(val) if k in ("wg_mtu", "ospf_cost") else str(val).strip()
         ipaddress.ip_network(self.home["lan_cidr"])
         self.save()
         return self.home
+
+
+def ensure_awg(v):
+    """Параметры AmneziaWG (ASC) для линка: одинаковые на VPS и на Keenetic. Возвращает True, если добавлены."""
+    if "awg" in v:
+        return False
+    r = secrets.SystemRandom()
+    s1 = r.randint(15, 150)
+    s2 = r.randint(15, 150)
+    while s1 + 56 == s2:
+        s2 = r.randint(15, 150)
+    hs = set()
+    while len(hs) < 4:
+        hs.add(r.randint(5, 2**31 - 1))
+    h1, h2, h3, h4 = sorted(hs)
+    v["awg"] = {"port": r.randint(40000, 59999), "jc": r.randint(4, 8), "jmin": 40, "jmax": 70,
+                "s1": s1, "s2": s2, "h1": h1, "h2": h2, "h3": h3, "h4": h4}
+    return True

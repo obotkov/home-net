@@ -34,6 +34,8 @@ def public_vps(store, v):
     out["client_link"] = generator.client_link(store.home, v)
     out["iface"] = generator.home_iface(v)
     out["wg_pub"] = {"home": v["wg"]["home_pub"], "vps": v["wg"]["vps_pub"]}
+    if store.home.get("mode") == "keenetic":
+        out["keenetic_cli"] = generator.keenetic_cli(store.home, v)
     return out
 
 
@@ -137,7 +139,7 @@ class App:
     def deploy_vps(self, v, password=None):
         """Разворачивание VPS по SSH. Пароль (если дан) используется один раз: ставим на VPS ключ узла
         через sshpass + ssh-copy-id, дальше всё идёт по ключу. Пароль нигде не сохраняется."""
-        script = generator.vps_bootstrap(self.store.home, v)
+        script = generator.bootstrap_for(self.store.home, v)
         self.write_out(generator.all_files(self.store.home, self.store.vps, v))
         target = f"{v['ssh_user']}@{v['public_ip']}"
         common = ["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=15", "-p", str(v["ssh_port"])]
@@ -163,11 +165,17 @@ class App:
                           "sudo -n bash -s")
         steps.append((["ssh", "-o", "BatchMode=yes", "-i", self.SSH_KEY, *common, target, remote], stdin, None))
         v.setdefault("deploy", {})
-        self._run_bg(v["deploy"], steps, demo + [
-            "== пакеты", "== конфиги", "== фаервол: WireGuard доступен только через локальный Xray", "== сервисы",
-            "interface: wg-home", "ospf1      OSPF       ---        up     Running", "== готово"], secrets_=(password,))
+        if self.store.home.get("mode") == "keenetic":
+            demo += ["== пакеты", "== AmneziaWG", "== конфиги", "== сервисы", "interface: awg-home",
+                     f"  listening port: {v['awg']['port']}", "== готово. Теперь импортируйте конфиг в Keenetic"]
+        else:
+            demo += ["== пакеты", "== конфиги", "== фаервол: WireGuard доступен только через локальный Xray",
+                     "== сервисы", "interface: wg-home", "ospf1      OSPF       ---        up     Running", "== готово"]
+        self._run_bg(v["deploy"], steps, demo, secrets_=(password,))
 
     def apply_home(self):
+        if self.store.home.get("mode") == "keenetic":
+            raise ValueError("В режиме Keenetic домашнего Linux-узла нет: импортируйте конфиг в роутер (карточка VPS → «Keenetic»)")
         files = generator.all_files(self.store.home, self.store.vps)
         path = self.write_out(files)
         if not self.apply_enabled:
@@ -284,7 +292,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, updater.status())
         if path == "/api/home/files":
             return self._send(200, generator.all_files(s.home, s.vps))
-        m = re.match(r"^/api/vps/(\w+)(/files|/bootstrap\.sh|/deploy)?$", path)
+        m = re.match(r"^/api/vps/(\w+)(/files|/bootstrap\.sh|/deploy|/keenetic\.conf)?$", path)
         if m:
             v = s.get_vps(m[1])
             if not v:
@@ -292,10 +300,13 @@ class Handler(BaseHTTPRequestHandler):
             if m[2] == "/files":
                 return self._send(200, generator.all_files(s.home, s.vps, v))
             if m[2] == "/bootstrap.sh":
-                return self._send(200, generator.vps_bootstrap(s.home, v), "text/x-shellscript; charset=utf-8",
+                return self._send(200, generator.bootstrap_for(s.home, v), "text/x-shellscript; charset=utf-8",
                                   {"Content-Disposition": f'attachment; filename="bootstrap-{v["name"]}.sh"'})
             if m[2] == "/deploy":
                 return self._send(200, v.get("deploy", {}))
+            if m[2] == "/keenetic.conf":
+                return self._send(200, generator.keenetic_conf(s.home, v), "text/plain; charset=utf-8",
+                                  {"Content-Disposition": f'attachment; filename="keenetic-{v["name"]}.conf"'})
             return self._send(200, public_vps(s, v))
         self._send(404, {"error": "not found"})
 

@@ -274,8 +274,119 @@ echo "готово"
     return "\n".join(parts)
 
 
+# ---------------------------------------------------------------- режим Keenetic (AmneziaWG)
+def _asc_lines(a):
+    return (f"Jc = {a['jc']}\nJmin = {a['jmin']}\nJmax = {a['jmax']}\nS1 = {a['s1']}\nS2 = {a['s2']}\n"
+            f"H1 = {a['h1']}\nH2 = {a['h2']}\nH3 = {a['h3']}\nH4 = {a['h4']}")
+
+
+def awg_vps_conf(home, v):
+    a = v["awg"]
+    return f"""{MARK}
+# Линк VPS {v['name']} <-> Keenetic (AmneziaWG). Домашняя сеть {home['lan_cidr']} маршрутизируется в туннель.
+[Interface]
+PrivateKey = {v['wg']['vps_priv']}
+Address = {v['vps_tun_ip']}/31
+ListenPort = {a['port']}
+MTU = {home['wg_mtu']}
+{_asc_lines(a)}
+
+[Peer]
+PublicKey = {v['wg']['home_pub']}
+PresharedKey = {v['wg']['psk']}
+AllowedIPs = {v['home_tun_ip']}/32, {home['lan_cidr']}
+"""
+
+
+def keenetic_conf(home, v):
+    """Файл для импорта в Keenetic: «Интернет → Другие подключения → WireGuard → Загрузить из файла»."""
+    a = v["awg"]
+    return f"""[Interface]
+PrivateKey = {v['wg']['home_priv']}
+Address = {v['home_tun_ip']}/31
+MTU = {home['wg_mtu']}
+{_asc_lines(a)}
+
+[Peer]
+PublicKey = {v['wg']['vps_pub']}
+PresharedKey = {v['wg']['psk']}
+Endpoint = {v['public_ip']}:{a['port']}
+AllowedIPs = {v['vps_tun_ip']}/32
+PersistentKeepalive = 25
+"""
+
+
+def keenetic_cli(home, v, iface="Wireguard0"):
+    """Команды CLI Keenetic после импорта: доступ из туннеля в домашнюю сеть и проверка ASC."""
+    a = v["awg"]
+    return f"""interface {iface} security-level private
+interface {iface} wireguard asc {a['jc']} {a['jmin']} {a['jmax']} {a['s1']} {a['s2']} {a['h1']} {a['h2']} {a['h3']} {a['h4']}
+interface {iface} up
+system configuration save
+show interface {iface}
+"""
+
+
+def vps_bootstrap_keenetic(home, v):
+    """VPS для режима Keenetic: сервер AmneziaWG до роутера + Xray для телефонов."""
+    a = v["awg"]
+    return f"""#!/usr/bin/env bash
+# netadmin (режим Keenetic): установка узла {v['name']} ({v['public_ip']})
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+[ "$(id -u)" = 0 ] || {{ echo "Нужен root"; exit 1; }}
+
+echo "== пакеты"
+apt-get update -qq
+apt-get install -y -qq curl gnupg nftables "linux-headers-$(uname -r)" >/dev/null || \
+  apt-get install -y -qq curl gnupg nftables >/dev/null
+command -v xray >/dev/null || {XRAY_INSTALL}
+
+echo "== AmneziaWG"
+if ! command -v awg-quick >/dev/null; then
+  . /etc/os-release
+  CODENAME=focal; [ "$ID" = ubuntu ] && CODENAME="$VERSION_CODENAME"
+  FPR=$(curl -fsSL https://api.launchpad.net/1.0/~amnezia/+archive/ubuntu/ppa \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["signing_key_fingerprint"])')
+  curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$FPR" | gpg --dearmor --yes -o /usr/share/keyrings/amnezia.gpg
+  echo "deb [signed-by=/usr/share/keyrings/amnezia.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu $CODENAME main" \
+    > /etc/apt/sources.list.d/amnezia.list
+  apt-get update -qq
+  apt-get install -y -qq amneziawg >/dev/null
+fi
+modprobe amneziawg 2>/dev/null || {{ echo "Модуль amneziawg не загрузился (нет заголовков ядра?)"; exit 1; }}
+
+echo "== конфиги"
+{_heredoc('/etc/amnezia/amneziawg/awg-home.conf', awg_vps_conf(home, v))}
+{_heredoc('/usr/local/etc/xray/config.json', xray_vps_conf(home, v), '644')}
+{_SYSCTL}
+if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then ufw allow {a['port']}/udp >/dev/null; ufw allow {v['xray_port']}/tcp >/dev/null; fi
+
+echo "== сервисы"
+systemctl enable -q awg-quick@awg-home
+systemctl restart awg-quick@awg-home
+systemctl enable -q xray && systemctl restart xray
+sleep 1
+awg show awg-home | head -n 8 || true
+echo "== готово. Теперь импортируйте конфиг в Keenetic (кнопка «Конфиг для Keenetic» в панели)"
+"""
+
+
+def bootstrap_for(home, v):
+    return vps_bootstrap_keenetic(home, v) if home.get("mode") == "keenetic" else vps_bootstrap(home, v)
+
+
 def all_files(home, vps_list, v=None):
     """Набор файлов для скачивания: для VPS или для дома."""
+    if v and home.get("mode") == "keenetic":
+        return {
+            f"{v['name']}/keenetic-{v['name']}.conf": keenetic_conf(home, v),
+            f"{v['name']}/keenetic-cli.txt": keenetic_cli(home, v),
+            f"{v['name']}/bootstrap.sh": vps_bootstrap_keenetic(home, v),
+            f"{v['name']}/awg-home.conf": awg_vps_conf(home, v),
+            f"{v['name']}/xray.json": xray_vps_conf(home, v),
+            f"{v['name']}/client-link.txt": client_link(home, v) + "\n",
+        }
     if v:
         return {
             f"{v['name']}/bootstrap.sh": vps_bootstrap(home, v),

@@ -17,7 +17,7 @@ LEASE_FILES = ["/tmp/dhcp.leases", "/var/lib/misc/dnsmasq.leases", "/var/lib/dhc
 
 
 def demo_mode():
-    return os.environ.get("NETADMIN_DEMO") == "1" or not shutil.which("wg")
+    return os.environ.get("NETADMIN_DEMO") == "1" or not (shutil.which("wg") or shutil.which("awg"))
 
 
 def _run(cmd, timeout=5):
@@ -34,9 +34,9 @@ def parse_wg_dump(text):
     res = {}
     for line in text.splitlines():
         f = line.split("\t")
-        if len(f) == 5:  # интерфейс
+        if f[0] not in res and len(f) >= 5:  # интерфейс (у awg после fwmark идут параметры ASC)
             res[f[0]] = {"listen_port": int(f[3]) if f[3].isdigit() else None, "peers": []}
-        elif len(f) == 9 and f[0] in res:
+        elif len(f) >= 9 and f[0] in res:
             res[f[0]]["peers"].append({
                 "public_key": f[1], "endpoint": None if f[3] == "(none)" else f[3],
                 "allowed_ips": f[4], "latest_handshake": int(f[5]),
@@ -91,6 +91,8 @@ def collect(store):
         return _demo(store)
     home = store.home
     wg = parse_wg_dump(_run(["wg", "show", "all", "dump"]))
+    if shutil.which("awg"):
+        wg.update(parse_wg_dump(_run(["awg", "show", "all", "dump"])))
     ospf = parse_ospf_neighbors(_run(["birdc", "-r", "show", "ospf", "neighbors"]))
     routes = parse_bird_routes(_run(["birdc", "-r", "show", "route"]))
     leases = {}
@@ -99,8 +101,9 @@ def collect(store):
             with open(p) as f:
                 leases.update(parse_leases(f.read()))
     devices = []
-    try:
-        neigh = json.loads(_run(["ip", "-j", "neigh", "show", "dev", home["lan_if"]]) or "[]")
+    try:  # в режиме Keenetic панель стоит на VPS и домашней LAN не видит
+        neigh = [] if home.get("mode") == "keenetic" else \
+            json.loads(_run(["ip", "-j", "neigh", "show", "dev", home["lan_if"]]) or "[]")
     except json.JSONDecodeError:
         neigh = []
     seen = set()
@@ -118,14 +121,19 @@ def collect(store):
         if ip not in seen:
             devices.append({"ip": ip, "mac": lease["mac"], "hostname": lease["hostname"], "online": False,
                             "state": "lease"})
-    services = {s: _run(["systemctl", "is-active", s]).strip() or "unknown" for s in ("xray", "bird")}
+    services = {s: _run(["systemctl", "is-active", s]).strip() or "unknown"
+                for s in ("xray", "bird", "awg-quick@awg-home")}
     return _assemble(store, wg, ospf, routes, devices, services, demo=False)
 
 
 def _assemble(store, wg, ospf, routes, devices, services, demo):
     now = int(time.time())
     links = []
+    keenetic = store.home.get("mode") == "keenetic"
     for v in store.vps:
+        if keenetic:
+            links.append(_keenetic_link(v, wg, now))
+            continue
         iface = home_iface(v)
         w = wg.get(iface)
         peer = w["peers"][0] if w and w["peers"] else None
@@ -145,9 +153,24 @@ def _assemble(store, wg, ospf, routes, devices, services, demo):
     devices.sort(key=lambda d: tuple(int(x) for x in d["ip"].split(".")))
     return {
         "demo": demo, "time": now,
-        "home": {k: store.home[k] for k in ("name", "lan_if", "lan_cidr", "router_id", "wg_mtu", "ospf_cost")},
+        "home": {k: store.home.get(k) for k in ("name", "lan_if", "lan_cidr", "router_id", "wg_mtu", "ospf_cost", "mode")},
         "services": services, "links": links, "ospf_neighbors": ospf, "routes": routes, "devices": devices,
         "unknown_wg": [i for i in wg if i.startswith("wg-") and i not in {home_iface(v) for v in store.vps}],
+    }
+
+
+def _keenetic_link(v, wg, now):
+    """Режим Keenetic: статус видно только для VPS, на котором стоит сама панель
+    (там есть пир с ключом роутера). Для остальных VPS — «неизвестно»."""
+    peer = next((p for w in wg.values() for p in w["peers"] if p["public_key"] == v["wg"]["home_pub"]), None)
+    hs = peer["latest_handshake"] if peer else 0
+    status = "unknown" if not peer else ("up" if hs and now - hs < 180 else "down")
+    return {
+        "id": v["id"], "name": v["name"], "label": v["label"], "public_ip": v["public_ip"], "iface": "awg-home",
+        "tunnel": f"{v['home_tun_ip']} ↔ {v['vps_tun_ip']}", "cost": v["cost"],
+        "wg_up": peer is not None, "handshake_ago": (now - hs) if hs else None,
+        "rx": peer["rx"] if peer else 0, "tx": peer["tx"] if peer else 0,
+        "ospf_state": None, "status": status, "deploy": v.get("deploy", {}).get("status", "never"),
     }
 
 
@@ -178,7 +201,7 @@ def _demo(store):
         if v.get("deploy", {}).get("status") in ("never",) and v["index"] > 2:
             healthy = False
         wg[iface] = {"listen_port": None, "peers": [{
-            "public_key": v["wg"]["vps_pub"], "endpoint": f"127.0.0.1:{v['local_port']}",
+            "public_key": v["wg"]["home_pub" if store.home.get("mode") == "keenetic" else "vps_pub"], "endpoint": f"127.0.0.1:{v['local_port']}",
             "allowed_ips": "0.0.0.0/0", "latest_handshake": now - rnd.randint(5, 110) if healthy else 0,
             "rx": rnd.randint(10**6, 10**10) if healthy else 0, "tx": rnd.randint(10**6, 10**9) if healthy else 0}]}
         if healthy:
@@ -186,5 +209,5 @@ def _demo(store):
                          "ip": v["vps_tun_ip"]})
             routes.append({"net": f"{v['vps_tun_ip']}/31", "type": "unicast", "proto": "ospf1", "primary": True,
                            "via": None, "iface": iface, "metric": str(v["cost"])})
-    services = {"xray": "active" if store.vps else "inactive", "bird": "active"}
+    services = {"xray": "active" if store.vps else "inactive", "bird": "active", "awg-quick@awg-home": "active"}
     return _assemble(store, wg, ospf, routes, devices, services, demo=True)
