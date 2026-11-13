@@ -27,7 +27,7 @@ def _run(cmd, timeout=6):
 
 
 # ---------------------------------------------------------------- systemd
-def _units():
+def _units(keenetic=False):
     units = ["xray"]
     _, out = _run(["systemctl", "list-units", "--all", "--no-legend", "--plain", "--type=service",
                    "awg-quick@*", "wg-quick@*"])
@@ -35,7 +35,7 @@ def _units():
         name = line.split()[0] if line.split() else ""
         if name.endswith(".service"):
             units.append(name[:-8])
-    if shutil.which("bird"):
+    if shutil.which("bird") and not keenetic:
         units.append("bird")
     return list(dict.fromkeys(units))
 
@@ -176,7 +176,7 @@ def _tunnels():
 def status(store):
     if demo_mode():
         return _demo(store)
-    return {"demo": False, "time": int(time.time()), "services": [_unit_info(u) for u in _units()],
+    return {"demo": False, "time": int(time.time()), "services": [_unit_info(u) for u in _units(store.home.get("mode") == "keenetic")],
             "xray": _xray(), "tunnels": _tunnels()}
 
 
