@@ -214,7 +214,7 @@ def diagnose(store):
                 "и нажмите «Переустановить» на карточке этого сервера.")
     elif not all(o["ok"] for o in out if o["title"].startswith("ping")):
         hint = ("Туннель до роутера поднят, но Keenetic не пускает трафик из него. В командной строке Keenetic "
-                "(my.keenetic.net/a) выполните «interface Wireguard0 security-level private», затем "
+                "(192.168.1.1/webcli/ или telnet 192.168.1.1) выполните «interface Wireguard0 security-level private», затем "
                 "«system configuration save» (имя подключения может быть Wireguard1, видно в «show interface»).")
     elif not by.get("HTTP", {"ok": True})["ok"]:
         hint = "Роутер отвечает на ping, но веб-страница не открылась: проверьте доступ к веб-интерфейсу в настройках Keenetic."
