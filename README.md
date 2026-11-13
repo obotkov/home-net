@@ -58,6 +58,37 @@ LAN-интерфейс и подсеть, генерирует пароль, с�
   (секретов в коде нет, все ключи создаются на узле), либо скопируйте `install.sh` на узел и запустите с токеном
   (fine-grained, право Contents: read): `sudo NETADMIN_GITHUB_TOKEN=github_pat_... bash install.sh`
 
+### Домен и HTTPS (Let's Encrypt)
+
+Панель можно повесить на домен с настоящим сертификатом. Перед ней ставится [Caddy](https://caddyserver.com):
+он сам получает сертификат Let's Encrypt и сам его продлевает (примерно за 30 дней до истечения), cron не нужен.
+Сама панель после этого слушает только `127.0.0.1:8088`.
+
+При первой установке скрипт спросит домен интерактивно. Или сразу флагами:
+
+```bash
+# 1) Белый IP, порты 80 и 443 проброшены на этот узел, A-запись домена указывает на белый IP
+curl -fsSL https://raw.githubusercontent.com/obotkov/home-net/main/install.sh | sudo bash -s -- \
+  --domain panel.example.com --email me@example.com
+
+# 2) Без белого IP / за CGNAT: проверка через DNS Cloudflare, никакие порты открывать не нужно.
+#    A-запись может указывать даже на LAN-адрес узла (192.168.1.20) или его адрес в VPN.
+curl -fsSL https://raw.githubusercontent.com/obotkov/home-net/main/install.sh | sudo bash -s -- \
+  --domain panel.example.com --email me@example.com --acme cloudflare --cf-token <токен>
+```
+
+Токен Cloudflare: My Profile → API Tokens → Create Token → шаблон «Edit zone DNS», зона вашего домена.
+Запись в Cloudflare должна быть «DNS only» (серое облако). Для DNS-проверки скрипт скачивает сборку Caddy
+с модулем Cloudflare с caddyserver.com и подключает её через drop-in, системный пакет не трогает.
+
+**Кто видит панель.** По умолчанию (`--allow private`) Caddy пускает только частные адреса: LAN, VPN-туннели,
+CGNAT-диапазон. Остальным отвечает 403, а получение и продление сертификата при этом работает.
+`--allow any` открывает панель всем (тогда защищает только пароль), можно задать свой список: `--allow "192.168.1.0/24 10.255.0.0/16"`.
+Удобнее всего вариант 2 с A-записью на LAN-адрес: из дома и через VPN панель открывается по `https://домен`, а из интернета её не видно вовсе.
+
+Домен запоминается в `/etc/netadmin.env`, повторный запуск без флагов его сохраняет. Сменить: запустить с новым
+`--domain`. Убрать: `--no-domain`. Проблемы с сертификатом: `journalctl -u caddy -n 50`.
+
 Для кнопки «Развернуть по SSH» добавьте напечатанный ключ на VPS:
 `sudo ssh-copy-id -i /root/.ssh/id_ed25519 root@<vps>`. Без этого скачайте `bootstrap.sh` в карточке VPS
 и запустите вручную: `ssh root@<vps> 'bash -s' < bootstrap-ams.sh`.
