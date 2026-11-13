@@ -508,6 +508,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     global APP
+    if not os.environ.get("HOME"):  # под systemd HOME пуст: ssh-copy-id, ssh, go и др. без него ломаются
+        import pwd
+        os.environ["HOME"] = pwd.getpwuid(os.getuid()).pw_dir or "/root"
     APP = App()
     host, _, port = os.environ.get("NETADMIN_LISTEN", "127.0.0.1:8088").rpartition(":")
     srv = ThreadingHTTPServer((host or "127.0.0.1", int(port)), Handler)

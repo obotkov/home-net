@@ -428,6 +428,7 @@ Wants=network-online.target
 
 [Service]
 WorkingDirectory=$PREFIX
+Environment=HOME=/root
 EnvironmentFile=$ENV_FILE
 ExecStart=$(command -v python3) -m netadmin
 Restart=on-failure
